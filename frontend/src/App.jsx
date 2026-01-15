@@ -879,6 +879,12 @@ export default function App() {
     }
   }
 
+  useEffect(() => {
+    if (!token) return
+    loadTickets()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, filterStatus, filterPriority, filterAssignedAgent, filterCreatedFrom, filterCreatedTo])
+
   async function searchTickets(e) {
     if (e && e.preventDefault) e.preventDefault()
     if (!token) return
@@ -904,22 +910,26 @@ export default function App() {
     }
   }
 
-  async function loadTicketDetail(ticketId) {
-    if (!token) return
-    const t = await apiFetch(`/api/tickets/${ticketId}/`, { token })
-    setSelectedTicket(t)
-    const msgs = await apiFetch(`/api/tickets/${ticketId}/messages/`, { token })
-    setMessages(Array.isArray(msgs) ? msgs : [])
+  async function loadTicketDetails(id) {
+    if (!token || !id) return
+    try {
+      const detail = await apiFetch(`/api/tickets/${id}/`, { token })
+      setSelectedTicket(detail)
+    } catch {
+      setSelectedTicket(null)
+    }
+
+    try {
+      const msgs = await apiFetch(`/api/tickets/${id}/messages/`, { token })
+      setMessages(Array.isArray(msgs) ? msgs : [])
+    } catch {
+      setMessages([])
+    }
   }
 
   useEffect(() => {
-    if (!token) return
-    loadTickets()
-  }, [token])
-
-  useEffect(() => {
     if (!token || !selectedTicketId) return
-    loadTicketDetail(selectedTicketId)
+    loadTicketDetails(selectedTicketId)
   }, [token, selectedTicketId])
 
   useEffect(() => {
@@ -1828,7 +1838,30 @@ export default function App() {
 
                   <div style={{ height: 'calc(100vh - 420px)', overflow: 'auto', display: 'grid', gap: 10, paddingRight: 4 }}>
                     {messages.map((m) => (
-                      <div key={m.id} style={{ display: 'grid', gridTemplateColumns: '18px 1fr', gap: 10, alignItems: 'start' }}>
+                      (() => {
+                        const author = m.author
+                        const authorId =
+                          author && typeof author === 'object' && 'id' in author ? author.id : author
+                        const authorUsername =
+                          author && typeof author === 'object' && 'username' in author ? author.username : author
+
+                        const isMine =
+                          (authorId !== null &&
+                            authorId !== undefined &&
+                            user?.id !== null &&
+                            user?.id !== undefined &&
+                            String(authorId) === String(user.id)) ||
+                          (typeof authorUsername === 'string' && authorUsername === (user?.username || ''))
+                        return (
+                      <div
+                        key={m.id}
+                        style={{
+                          display: 'grid',
+                          gridTemplateColumns: isMine ? '18px 1fr' : '1fr 18px',
+                          gap: 10,
+                          alignItems: 'start',
+                        }}
+                      >
                         <div
                           style={{
                             width: 10,
@@ -1836,10 +1869,26 @@ export default function App() {
                             borderRadius: 999,
                             background: m.is_internal ? UI.colors.warning : UI.colors.primary,
                             marginTop: 6,
-                            boxShadow: `0 0 0 4px ${m.is_internal ? 'rgba(217,119,6,0.14)' : 'rgba(37,99,235,0.12)'}`,
+                            boxShadow: `0 0 0 4px ${
+                              m.is_internal
+                                ? 'rgba(217,119,6,0.14)'
+                                : isMine
+                                  ? 'rgba(22,163,74,0.12)'
+                                  : 'rgba(37,99,235,0.12)'
+                            }`,
+                            gridColumn: isMine ? 1 : 2,
+                            justifySelf: isMine ? 'start' : 'end',
                           }}
                         />
-                        <div style={{ padding: 12, borderRadius: 12, background: UI.colors.surface, border: `1px solid ${UI.colors.border}` }}>
+                        <div
+                          style={{
+                            padding: 12,
+                            borderRadius: 12,
+                            background: m.is_internal ? UI.colors.surface : isMine ? 'rgba(22,163,74,0.08)' : UI.colors.surface,
+                            border: `1px solid ${UI.colors.border}`,
+                            gridColumn: isMine ? 2 : 1,
+                          }}
+                        >
                           <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'baseline' }}>
                             <div style={{ fontSize: 13, fontWeight: 900 }}>
                               {m.author ?? '—'}
@@ -1873,6 +1922,8 @@ export default function App() {
                           ) : null}
                         </div>
                       </div>
+                        )
+                      })()
                     ))}
                   </div>
 
