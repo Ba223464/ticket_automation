@@ -34,7 +34,7 @@ class TicketConsumer(AsyncWebsocketConsumer):
         if role == UserProfile.Role.ADMIN:
             allowed = True
         elif role == UserProfile.Role.AGENT:
-            allowed = await self._ticket_exists(Q(id=ticket_id))
+            allowed = await self._ticket_exists(Q(id=ticket_id, assigned_agent_id=user.id))
         else:
             allowed = await self._ticket_exists(Q(id=ticket_id, customer_id=user.id))
 

@@ -6,6 +6,7 @@ from rest_framework.views import APIView
 from accounts.models import UserProfile
 from accounts.serializers import UserProfileSerializer, UserSerializer
 from accounts.utils import get_user_role
+from tickets.tasks import assign_ticket
 
 
 class MeView(APIView):
@@ -33,6 +34,8 @@ class AvailabilityView(APIView):
 
         profile, _ = UserProfile.objects.get_or_create(user=request.user)
 
+        before_available = bool(profile.is_available)
+
         if "is_available" in request.data:
             profile.is_available = bool(request.data.get("is_available"))
 
@@ -43,4 +46,16 @@ class AvailabilityView(APIView):
                 return Response({"detail": "capacity must be an integer"}, status=status.HTTP_400_BAD_REQUEST)
 
         profile.save(update_fields=["is_available", "capacity"])
+
+        if role == UserProfile.Role.AGENT and (not before_available) and profile.is_available:
+            from tickets.models import Ticket
+
+            unassigned = (
+                Ticket.objects.filter(status=Ticket.Status.OPEN, assigned_agent__isnull=True)
+                .order_by("created_at")
+                .values_list("id", flat=True)[:50]
+            )
+            for tid in unassigned:
+                assign_ticket.delay(int(tid))
+
         return Response(UserProfileSerializer(profile).data)
