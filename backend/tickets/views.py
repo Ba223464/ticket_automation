@@ -11,7 +11,7 @@ from django.db.models.functions import Coalesce
 from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
-from rest_framework.parsers import FormParser, MultiPartParser
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.throttling import UserRateThrottle
@@ -234,7 +234,7 @@ class TicketViewSet(viewsets.ModelViewSet):
         methods=["get", "post"],
         url_path="messages",
         permission_classes=[IsAuthenticated],
-        parser_classes=[MultiPartParser, FormParser],
+        parser_classes=[MultiPartParser, FormParser, JSONParser],
     )
     def messages(self, request, pk=None):
         ticket = self.get_object()
