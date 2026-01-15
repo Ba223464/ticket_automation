@@ -64,3 +64,27 @@ class TicketMessage(models.Model):
 
     def __str__(self) -> str:
         return f"TicketMessage(ticket_id={self.ticket_id}, id={self.id})"
+
+
+class Attachment(models.Model):
+    ticket = models.ForeignKey(Ticket, on_delete=models.CASCADE, related_name="attachments")
+    message = models.ForeignKey(
+        TicketMessage,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="attachments",
+    )
+    uploader = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="uploaded_attachments",
+    )
+
+    file = models.FileField(upload_to="attachments/%Y/%m/%d/")
+    filename = models.CharField(max_length=255, blank=True)
+    content_type = models.CharField(max_length=120, blank=True)
+    size = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)

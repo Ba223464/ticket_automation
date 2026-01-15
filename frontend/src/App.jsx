@@ -7,8 +7,29 @@ function getApiBaseUrl() {
   return import.meta.env.VITE_API_BASE_URL
 }
 
+function sortTickets(list, mode) {
+  const arr = Array.isArray(list) ? [...list] : []
+  if (mode === 'priority') {
+    const score = (p) => (p === 'URGENT' ? 4 : p === 'HIGH' ? 3 : p === 'MEDIUM' ? 2 : p === 'LOW' ? 1 : 0)
+    arr.sort((a, b) => score(b.priority) - score(a.priority) || (a.id || 0) - (b.id || 0))
+    return arr
+  }
+  // oldest
+  arr.sort((a, b) => (a.id || 0) - (b.id || 0))
+  return arr
+}
+
 function getWsBaseUrl() {
   return import.meta.env.VITE_WS_BASE_URL
+}
+
+function toAbsoluteUrl(maybeRelativeUrl) {
+  const u = (maybeRelativeUrl || '').trim()
+  if (!u) return ''
+  if (u.startsWith('http://') || u.startsWith('https://')) return u
+  const base = getApiBaseUrl()
+  if (u.startsWith('/')) return `${base}${u}`
+  return `${base}/${u}`
 }
 
 function safeJsonParse(s) {
@@ -96,17 +117,24 @@ async function apiFetch(path, { method = 'GET', token, body, onAuthRefresh } = {
 
 const UI = {
   colors: {
-    bg: '#0b1220',
-    surface: 'rgba(255,255,255,0.06)',
-    surface2: 'rgba(255,255,255,0.08)',
-    border: 'rgba(255,255,255,0.10)',
-    text: '#e5e7eb',
-    muted: 'rgba(229,231,235,0.72)',
-    primary: '#60a5fa',
-    primaryBg: 'rgba(96,165,250,0.16)',
-    danger: '#f87171',
-    success: '#34d399',
-    warning: '#fbbf24',
+    bg: '#f6f8fb',
+    surface: '#ffffff',
+    surface2: '#f9fafb',
+    border: 'rgba(15,23,42,0.12)',
+    text: '#0f172a',
+    muted: 'rgba(15,23,42,0.62)',
+    primary: '#2563eb',
+    primaryBg: 'rgba(37,99,235,0.10)',
+    danger: '#dc2626',
+    success: '#16a34a',
+    warning: '#d97706',
+    shadow: 'rgba(15,23,42,0.10)',
+    shadowStrong: 'rgba(15,23,42,0.18)',
+    sidebarBg: '#0b1220',
+    sidebarSurface: 'rgba(255,255,255,0.06)',
+    sidebarBorder: 'rgba(255,255,255,0.10)',
+    sidebarText: '#e5e7eb',
+    sidebarMuted: 'rgba(229,231,235,0.72)',
   },
   radius: 14,
 }
@@ -121,20 +149,27 @@ function Button({ children, variant = 'primary', style, ...props }) {
     color: UI.colors.text,
     background: UI.colors.surface,
     cursor: 'pointer',
-    transition: 'transform 80ms ease, background 120ms ease, border-color 120ms ease',
+    transition: 'transform 90ms ease, background 150ms ease, border 150ms ease, box-shadow 150ms ease',
+    boxShadow: `0 1px 2px ${UI.colors.shadow}`,
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
   }
 
   const variants = {
     primary: {
-      background: UI.colors.primaryBg,
-      borderColor: 'rgba(96,165,250,0.35)',
+      background: UI.colors.primary,
+      border: `1px solid ${UI.colors.primary}`,
+      color: '#ffffff',
     },
     ghost: {
       background: 'transparent',
     },
     danger: {
-      background: 'rgba(248,113,113,0.14)',
-      borderColor: 'rgba(248,113,113,0.35)',
+      background: UI.colors.danger,
+      border: `1px solid ${UI.colors.danger}`,
+      color: '#ffffff',
     },
   }
 
@@ -145,6 +180,23 @@ function Button({ children, variant = 'primary', style, ...props }) {
         ...base,
         ...(variants[variant] || {}),
         ...style,
+      }}
+      onMouseEnter={(e) => {
+        try {
+          e.currentTarget.style.boxShadow = `0 6px 18px ${UI.colors.shadow}`
+        } catch {
+          // ignore
+        }
+        props.onMouseEnter?.(e)
+      }}
+      onMouseLeave={(e) => {
+        try {
+          e.currentTarget.style.boxShadow = `0 1px 2px ${UI.colors.shadow}`
+          e.currentTarget.style.transform = 'none'
+        } catch {
+          // ignore
+        }
+        props.onMouseLeave?.(e)
       }}
       onMouseDown={(e) => {
         try {
@@ -168,6 +220,175 @@ function Button({ children, variant = 'primary', style, ...props }) {
   )
 }
 
+function AttachmentViewer({ open, attachment, onClose }) {
+  if (!open || !attachment) return null
+  const url = toAbsoluteUrl(attachment.url)
+  const name = attachment.filename || 'attachment'
+  const ct = (attachment.content_type || '').toLowerCase()
+  const isImage = ct.startsWith('image/') || /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(name)
+  const isPdf = ct === 'application/pdf' || /\.pdf$/i.test(name)
+  const isDocx =
+    ct === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || /\.docx$/i.test(name) || /\.doc$/i.test(name)
+  const isText =
+    ct.startsWith('text/') || /\.(md|txt|log|json|csv|py|js|ts|tsx|jsx|html|css)$/i.test(name)
+
+  const [blobUrl, setBlobUrl] = useState('')
+  const [textPreview, setTextPreview] = useState('')
+  const [textPreviewError, setTextPreviewError] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    let createdUrl = ''
+
+    const run = async () => {
+      try {
+        if (!open || !url) return
+        const res = await fetch(url)
+        if (!res.ok) return
+        const blob = await res.blob()
+        createdUrl = URL.createObjectURL(blob)
+        if (!cancelled) setBlobUrl(createdUrl)
+
+        if (isText) {
+          try {
+            const text = await blob.text()
+            if (!cancelled) setTextPreview(text)
+          } catch (e) {
+            if (!cancelled) setTextPreviewError(e?.message || 'Unable to preview text')
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    setBlobUrl('')
+    setTextPreview('')
+    setTextPreviewError('')
+    run()
+
+    return () => {
+      cancelled = true
+      try {
+        if (createdUrl) URL.revokeObjectURL(createdUrl)
+      } catch {
+        // ignore
+      }
+    }
+  }, [open, url])
+
+  const previewUrl = blobUrl || url
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(15,23,42,0.55)',
+        display: 'grid',
+        placeItems: 'center',
+        zIndex: 9999,
+        padding: 16,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: 'min(1000px, 96vw)',
+          height: 'min(700px, 92vh)',
+          background: UI.colors.surface,
+          borderRadius: 14,
+          border: `1px solid ${UI.colors.border}`,
+          boxShadow: `0 20px 50px ${UI.colors.shadowStrong}`,
+          display: 'grid',
+          gridTemplateRows: 'auto 1fr',
+          overflow: 'hidden',
+        }}
+      >
+        <div style={{ padding: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+          <div style={{ fontSize: 13, fontWeight: 900, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {name}
+          </div>
+          <ActionRow style={{ justifyContent: 'flex-end' }}>
+            <a href={url} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: UI.colors.primary, textDecoration: 'none', fontWeight: 700 }}>
+              Open
+            </a>
+            <Button type="button" variant="ghost" onClick={onClose} style={{ padding: '6px 10px', whiteSpace: 'nowrap' }}>
+              Close
+            </Button>
+          </ActionRow>
+        </div>
+        <div style={{ background: UI.colors.surface2, borderTop: `1px solid ${UI.colors.border}` }}>
+          {isDocx ? (
+            <div style={{ padding: 12, color: UI.colors.muted, fontSize: 13 }}>
+              Preview is not available for Word documents. Use the Open link above.
+            </div>
+          ) : isText ? (
+            <div style={{ width: '100%', height: '100%', overflow: 'auto', padding: 12 }}>
+              {textPreviewError ? (
+                <div style={{ color: UI.colors.danger, fontSize: 13 }}>{textPreviewError}</div>
+              ) : (
+                <pre
+                  style={{
+                    margin: 0,
+                    padding: 12,
+                    borderRadius: 12,
+                    border: `1px solid ${UI.colors.border}`,
+                    background: UI.colors.surface,
+                    color: UI.colors.text,
+                    fontSize: 12,
+                    lineHeight: '18px',
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-word',
+                  }}
+                >
+                  {textPreview || 'Loading preview…'}
+                </pre>
+              )}
+            </div>
+          ) : isImage ? (
+            <div style={{ width: '100%', height: '100%', overflow: 'auto', padding: 12 }}>
+              <img
+                src={previewUrl}
+                alt={name}
+                style={{ maxWidth: '100%', height: 'auto', display: 'block', borderRadius: 12, border: `1px solid ${UI.colors.border}` }}
+              />
+            </div>
+          ) : isPdf ? (
+            <div style={{ width: '100%', height: '100%' }}>
+              <iframe title={name} src={previewUrl} style={{ width: '100%', height: '100%', border: 'none' }} />
+              <object data={previewUrl} type="application/pdf" width="0" height="0">
+                <div style={{ padding: 12, color: UI.colors.muted, fontSize: 13 }}>
+                  Preview not available. Use the Open link above.
+                </div>
+              </object>
+            </div>
+          ) : (
+            <iframe title={name} src={previewUrl} style={{ width: '100%', height: '100%', border: 'none' }} />
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ActionRow({ children, style }) {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        gap: 10,
+        alignItems: 'center',
+        flexWrap: 'wrap',
+        ...style,
+      }}
+    >
+      {children}
+    </div>
+  )
+}
+
 function Field({ label, hint, children }) {
   return (
     <div style={{ display: 'grid', gap: 6 }}>
@@ -187,10 +408,31 @@ function Input(props) {
         padding: '10px 12px',
         borderRadius: 12,
         border: `1px solid ${UI.colors.border}`,
-        background: 'rgba(0,0,0,0.15)',
+        background: UI.colors.surface,
         color: UI.colors.text,
         outline: 'none',
+        fontSize: 14,
+        lineHeight: '20px',
+        boxShadow: `0 1px 2px ${UI.colors.shadow}`,
         ...(props.style || {}),
+      }}
+      onFocus={(e) => {
+        try {
+          e.currentTarget.style.borderColor = 'rgba(37,99,235,0.55)'
+          e.currentTarget.style.boxShadow = `0 0 0 4px rgba(37,99,235,0.12)`
+        } catch {
+          // ignore
+        }
+        props.onFocus?.(e)
+      }}
+      onBlur={(e) => {
+        try {
+          e.currentTarget.style.borderColor = UI.colors.border
+          e.currentTarget.style.boxShadow = `0 1px 2px ${UI.colors.shadow}`
+        } catch {
+          // ignore
+        }
+        props.onBlur?.(e)
       }}
     />
   )
@@ -205,11 +447,32 @@ function Textarea(props) {
         padding: '10px 12px',
         borderRadius: 12,
         border: `1px solid ${UI.colors.border}`,
-        background: 'rgba(0,0,0,0.15)',
+        background: UI.colors.surface,
         color: UI.colors.text,
         outline: 'none',
         resize: 'vertical',
+        fontSize: 14,
+        lineHeight: '20px',
+        boxShadow: `0 1px 2px ${UI.colors.shadow}`,
         ...(props.style || {}),
+      }}
+      onFocus={(e) => {
+        try {
+          e.currentTarget.style.borderColor = 'rgba(37,99,235,0.55)'
+          e.currentTarget.style.boxShadow = `0 0 0 4px rgba(37,99,235,0.12)`
+        } catch {
+          // ignore
+        }
+        props.onFocus?.(e)
+      }}
+      onBlur={(e) => {
+        try {
+          e.currentTarget.style.borderColor = UI.colors.border
+          e.currentTarget.style.boxShadow = `0 1px 2px ${UI.colors.shadow}`
+        } catch {
+          // ignore
+        }
+        props.onBlur?.(e)
       }}
     />
   )
@@ -224,9 +487,10 @@ function Select(props) {
         padding: '10px 12px',
         borderRadius: 12,
         border: `1px solid ${UI.colors.border}`,
-        background: 'rgba(0,0,0,0.15)',
+        background: UI.colors.surface,
         color: UI.colors.text,
         outline: 'none',
+        boxShadow: `0 1px 2px ${UI.colors.shadow}`,
         ...(props.style || {}),
       }}
     />
@@ -236,16 +500,16 @@ function Select(props) {
 function StatusPill({ status }) {
   const bg =
     status === 'OPEN'
-      ? 'rgba(96,165,250,0.18)'
+      ? 'rgba(37,99,235,0.10)'
       : status === 'ASSIGNED'
-        ? 'rgba(34,211,238,0.16)'
+        ? 'rgba(2,132,199,0.10)'
         : status === 'IN_PROGRESS'
-          ? 'rgba(251,191,36,0.14)'
+          ? 'rgba(217,119,6,0.12)'
           : status === 'WAITING_ON_CUSTOMER'
-            ? 'rgba(167,139,250,0.16)'
+            ? 'rgba(124,58,237,0.10)'
             : status === 'RESOLVED'
-              ? 'rgba(52,211,153,0.14)'
-              : 'rgba(255,255,255,0.08)'
+              ? 'rgba(22,163,74,0.10)'
+              : 'rgba(15,23,42,0.06)'
 
   const fg = UI.colors.text
 
@@ -274,12 +538,48 @@ function Card({ children }) {
         border: `1px solid ${UI.colors.border}`,
         borderRadius: UI.radius,
         padding: 16,
-        boxShadow: '0 10px 30px rgba(0,0,0,0.30)',
-        backdropFilter: 'blur(10px)',
+        boxShadow: `0 10px 24px ${UI.colors.shadow}`,
       }}
     >
       {children}
     </div>
+  )
+}
+
+function SidebarItem({ active, children, onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        textAlign: 'left',
+        width: '100%',
+        padding: '10px 12px',
+        borderRadius: 10,
+        border: `1px solid ${UI.colors.sidebarBorder}`,
+        background: active ? 'rgba(96,165,250,0.18)' : UI.colors.sidebarSurface,
+        color: UI.colors.sidebarText,
+        cursor: 'pointer',
+        fontWeight: active ? 800 : 650,
+        transition: 'background 120ms ease, box-shadow 120ms ease, transform 80ms ease',
+      }}
+      onMouseEnter={(e) => {
+        try {
+          e.currentTarget.style.boxShadow = '0 10px 26px rgba(0,0,0,0.35)'
+        } catch {
+          // ignore
+        }
+      }}
+      onMouseLeave={(e) => {
+        try {
+          e.currentTarget.style.boxShadow = 'none'
+          e.currentTarget.style.transform = 'none'
+        } catch {
+          // ignore
+        }
+      }}
+    >
+      {children}
+    </button>
   )
 }
 
@@ -296,9 +596,18 @@ export default function App() {
   const [registerEmail, setRegisterEmail] = useState('')
   const [registerPassword, setRegisterPassword] = useState('')
   const [registerError, setRegisterError] = useState('')
+  const [registerOtpSent, setRegisterOtpSent] = useState(false)
+  const [registerOtpCode, setRegisterOtpCode] = useState('')
+  const [registerVerificationToken, setRegisterVerificationToken] = useState('')
+  const [registerOtpLoading, setRegisterOtpLoading] = useState(false)
 
   const [tickets, setTickets] = useState([])
   const [ticketsError, setTicketsError] = useState('')
+  const [filterStatus, setFilterStatus] = useState('')
+  const [filterPriority, setFilterPriority] = useState('')
+  const [filterAssignedAgent, setFilterAssignedAgent] = useState('')
+  const [filterCreatedFrom, setFilterCreatedFrom] = useState('')
+  const [filterCreatedTo, setFilterCreatedTo] = useState('')
   const [ticketSearch, setTicketSearch] = useState('')
   const [ticketSearchLoading, setTicketSearchLoading] = useState(false)
   const [selectedTicketId, setSelectedTicketId] = useState(null)
@@ -311,6 +620,7 @@ export default function App() {
 
   const [newMessage, setNewMessage] = useState('')
   const [newMessageInternal, setNewMessageInternal] = useState(false)
+  const [newMessageFiles, setNewMessageFiles] = useState([])
 
   const [aiDraft, setAiDraft] = useState('')
   const [aiDraftLoading, setAiDraftLoading] = useState(false)
@@ -318,6 +628,9 @@ export default function App() {
 
   const [availability, setAvailability] = useState(null)
   const wsRef = useRef(null)
+
+  const [viewerOpen, setViewerOpen] = useState(false)
+  const [viewerAttachment, setViewerAttachment] = useState(null)
 
   const [adminNewUsername, setAdminNewUsername] = useState('')
   const [adminNewEmail, setAdminNewEmail] = useState('')
@@ -330,6 +643,11 @@ export default function App() {
   const [analyticsResolution, setAnalyticsResolution] = useState(null)
   const [analyticsVolume, setAnalyticsVolume] = useState(null)
   const [analyticsError, setAnalyticsError] = useState('')
+
+  const [agentQueueSort, setAgentQueueSort] = useState('oldest')
+
+  const [activePanel, setActivePanel] = useState('tickets')
+  const [authTab, setAuthTab] = useState('login')
 
   const role = useMemo(() => user?.profile?.role || null, [user])
 
@@ -378,6 +696,18 @@ export default function App() {
     }
   }, [token])
 
+  async function loadMe() {
+    if (!token) return
+    const u = await apiFetch('/api/me/', {
+      token,
+      onAuthRefresh: (nextAccess) => {
+        localStorage.setItem(TOKEN_KEY, nextAccess)
+        setToken(nextAccess)
+      },
+    })
+    setUser(u)
+  }
+
   async function login(e) {
     e.preventDefault()
     setLoginError('')
@@ -401,12 +731,45 @@ export default function App() {
     e.preventDefault()
     setRegisterError('')
     try {
+      const email = (registerEmail || '').trim()
+      if (email) {
+        if (!registerOtpSent) {
+          setRegisterOtpLoading(true)
+          await apiFetch('/api/auth/request-otp/', {
+            method: 'POST',
+            body: { email },
+          })
+          setRegisterOtpSent(true)
+          setRegisterOtpLoading(false)
+          setRegisterError('OTP sent to your email. Enter it below to verify.')
+          return
+        }
+
+        if (!registerVerificationToken) {
+          const code = (registerOtpCode || '').trim()
+          if (!code) {
+            setRegisterError('Enter the OTP sent to your email')
+            return
+          }
+          setRegisterOtpLoading(true)
+          const v = await apiFetch('/api/auth/verify-otp/', {
+            method: 'POST',
+            body: { email, code },
+          })
+          setRegisterOtpLoading(false)
+          setRegisterVerificationToken(v.verification_token || '')
+          setRegisterError('Email verified. Click Create again to finish registration.')
+          return
+        }
+      }
+
       const data = await apiFetch('/api/auth/register/', {
         method: 'POST',
         body: {
           username: registerUsername,
           email: registerEmail,
           password: registerPassword,
+          verification_token: registerVerificationToken || undefined,
         },
       })
       localStorage.setItem(TOKEN_KEY, data.access)
@@ -416,7 +779,11 @@ export default function App() {
       setRegisterUsername('')
       setRegisterEmail('')
       setRegisterPassword('')
+      setRegisterOtpSent(false)
+      setRegisterOtpCode('')
+      setRegisterVerificationToken('')
     } catch (err) {
+      setRegisterOtpLoading(false)
       setRegisterError(err.message)
     }
   }
@@ -462,8 +829,15 @@ export default function App() {
     if (!token) return
     setTicketsError('')
     try {
-      const list = await apiFetch('/api/tickets/', { token })
-      setTickets(Array.isArray(list) ? list : [])
+      const qs = new URLSearchParams()
+      if (filterStatus) qs.set('status', filterStatus)
+      if (filterPriority) qs.set('priority', filterPriority)
+      if (filterAssignedAgent) qs.set('assigned_agent', filterAssignedAgent)
+      if (filterCreatedFrom) qs.set('created_from', filterCreatedFrom)
+      if (filterCreatedTo) qs.set('created_to', filterCreatedTo)
+
+      const data = await apiFetch(`/api/tickets/${qs.toString() ? `?${qs.toString()}` : ''}`, { token })
+      setTickets(Array.isArray(data) ? data : [])
     } catch (err) {
       setTicketsError(err.message)
     }
@@ -480,8 +854,13 @@ export default function App() {
     setTicketsError('')
     setTicketSearchLoading(true)
     try {
-      const res = await apiFetch(`/api/tickets/search/?q=${encodeURIComponent(q)}`, { token })
-      setTickets(Array.isArray(res) ? res : [])
+      const qs = new URLSearchParams()
+      qs.set('q', q)
+      if (filterStatus) qs.set('status', filterStatus)
+      if (filterPriority) qs.set('priority', filterPriority)
+      if (filterAssignedAgent) qs.set('assigned_agent', filterAssignedAgent)
+      const data = await apiFetch(`/api/tickets/search/?${qs.toString()}`, { token })
+      setTickets(Array.isArray(data) ? data : [])
     } catch (err) {
       setTicketsError(err.message)
     } finally {
@@ -593,16 +972,45 @@ export default function App() {
     e.preventDefault()
     if (!token || !selectedTicketId) return
 
-    const created = await apiFetch(`/api/tickets/${selectedTicketId}/messages/`, {
-      method: 'POST',
-      token,
-      body: {
-        body: newMessage,
-        is_internal: newMessageInternal,
-      },
-    })
+    const hasFiles = Array.isArray(newMessageFiles) && newMessageFiles.length > 0
+    let created
+    if (!hasFiles) {
+      created = await apiFetch(`/api/tickets/${selectedTicketId}/messages/`, {
+        method: 'POST',
+        token,
+        body: {
+          body: newMessage,
+          is_internal: newMessageInternal,
+        },
+      })
+    } else {
+      const baseUrl = getApiBaseUrl()
+      const fd = new FormData()
+      fd.append('body', newMessage)
+      fd.append('is_internal', newMessageInternal ? 'true' : 'false')
+      for (const f of newMessageFiles) fd.append('files', f)
+
+      const res = await fetch(`${baseUrl}/api/tickets/${selectedTicketId}/messages/`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        body: fd,
+      })
+      const text = await res.text()
+      const data = text ? safeJsonParse(text) : null
+      if (!res.ok) {
+        const detail = (data && (data.detail || data.message)) || text || `HTTP ${res.status}`
+        const err = new Error(detail)
+        err.status = res.status
+        err.data = data
+        throw err
+      }
+      created = data
+    }
     setNewMessage('')
     setNewMessageInternal(false)
+    setNewMessageFiles([])
     setMessages((prev) => {
       const exists = prev.some((m) => m.id === created.id)
       if (exists) return prev
@@ -698,418 +1106,772 @@ export default function App() {
     <div
       style={{
         minHeight: '100vh',
-        background: `radial-gradient(1200px 600px at 20% 0%, rgba(96,165,250,0.20), transparent 60%), radial-gradient(900px 500px at 90% 20%, rgba(167,139,250,0.16), transparent 60%), ${UI.colors.bg}`,
+        background: UI.colors.bg,
         fontFamily: 'ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial',
         color: UI.colors.text,
       }}
     >
-      <div style={{ maxWidth: 1120, margin: '0 auto', padding: 24 }}>
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: 12,
-            marginBottom: 16,
-          }}
-        >
-          <div>
-            <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: 0.2 }}>
-              Smart Customer Support & Ticket Automation
-            </div>
-            <div style={{ color: UI.colors.muted, marginTop: 6, fontSize: 12 }}>Backend health: {health}</div>
-          </div>
-          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-            {user ? (
-              <>
-                <div style={{ color: UI.colors.text, fontWeight: 650 }}>
-                  {user.username} {user.profile?.role ? `(${user.profile.role})` : ''}
-                </div>
-                <Button variant="ghost" onClick={logout} style={{ padding: '8px 12px' }}>
-                  Logout
-                </Button>
-              </>
-            ) : null}
-          </div>
+      <div
+        style={{
+          height: 44,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '0 14px',
+          borderBottom: `1px solid ${UI.colors.border}`,
+          background: UI.colors.surface,
+          position: 'sticky',
+          top: 0,
+          zIndex: 10,
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
+          <div style={{ fontSize: 13, fontWeight: 900, letterSpacing: 0.2 }}>Ticket Automation</div>
+          <div style={{ color: UI.colors.muted, fontSize: 11 }}>Health: {health}</div>
         </div>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+          {user ? (
+            <>
+              <div style={{ color: UI.colors.text, fontWeight: 650, fontSize: 12 }}>
+                {user.username} {user.profile?.role ? `(${user.profile.role})` : ''}
+              </div>
+              <Button variant="ghost" onClick={logout} style={{ padding: '6px 10px' }}>
+                Logout
+              </Button>
+            </>
+          ) : null}
+        </div>
+      </div>
 
+      <div style={{ maxWidth: 1400, margin: '0 auto', padding: 16 }}>
         {!token || !user ? (
-          <Card>
-            <div style={{ fontSize: 16, fontWeight: 800, marginBottom: 8 }}>Welcome</div>
-            <div style={{ color: UI.colors.muted, marginBottom: 14, fontSize: 13 }}>
-              Use dev accounts: admin/admin, agent/agent, customer/customer
-            </div>
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: '1.1fr minmax(360px, 460px)',
+              gap: 16,
+              alignItems: 'stretch',
+              minHeight: 'calc(100vh - 120px)',
+            }}
+          >
             <div
               style={{
+                borderRadius: UI.radius,
+                background: UI.colors.sidebarBg,
+                border: `1px solid ${UI.colors.sidebarBorder}`,
+                boxShadow: '0 16px 40px rgba(0,0,0,0.25)',
+                padding: 22,
+                color: UI.colors.sidebarText,
                 display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))',
-                gap: 16,
-                alignItems: 'start',
+                alignContent: 'space-between',
               }}
             >
-              <form onSubmit={login} style={{ display: 'grid', gap: 12 }}>
-                <div style={{ fontWeight: 800 }}>Sign in</div>
-                <Field label="Username">
-                  <Input value={loginUsername} onChange={(e) => setLoginUsername(e.target.value)} placeholder="username" />
-                </Field>
-                <Field label="Password">
-                  <Input
-                    value={loginPassword}
-                    onChange={(e) => setLoginPassword(e.target.value)}
-                    placeholder="password"
-                    type="password"
-                  />
-                </Field>
-                <Button type="submit">Login</Button>
-                {loginError ? <div style={{ color: UI.colors.danger, fontSize: 13 }}>{loginError}</div> : null}
-              </form>
-
-              <form onSubmit={register} style={{ display: 'grid', gap: 12 }}>
-                <div style={{ fontWeight: 800 }}>Create account</div>
-                <Field label="Username">
-                  <Input
-                    value={registerUsername}
-                    onChange={(e) => setRegisterUsername(e.target.value)}
-                    placeholder="username"
-                  />
-                </Field>
-                <Field label="Email" hint="Optional">
-                  <Input
-                    value={registerEmail}
-                    onChange={(e) => setRegisterEmail(e.target.value)}
-                    placeholder="email"
-                  />
-                </Field>
-                <Field label="Password">
-                  <Input
-                    value={registerPassword}
-                    onChange={(e) => setRegisterPassword(e.target.value)}
-                    placeholder="password"
-                    type="password"
-                  />
-                </Field>
-                <Button type="submit">Create</Button>
-                {registerError ? <div style={{ color: UI.colors.danger, fontSize: 13 }}>{registerError}</div> : null}
-              </form>
+              <div>
+                <div style={{ fontSize: 20, fontWeight: 900, letterSpacing: 0.2 }}>Ticket Automation</div>
+                <div style={{ marginTop: 10, color: UI.colors.sidebarMuted, fontSize: 13, lineHeight: '20px' }}>
+                  AI-assisted customer support with real-time ticket updates, auto-assignment, search, analytics and email notifications.
+                </div>
+              </div>
+              <div style={{ display: 'grid', gap: 10 }}>
+                <div style={{ fontSize: 12, color: UI.colors.sidebarMuted }}>Backend health</div>
+                <div style={{ fontSize: 14, fontWeight: 800 }}>{health}</div>
+              </div>
             </div>
-          </Card>
+
+            <Card>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 10 }}>
+                <div>
+                  <div style={{ fontSize: 16, fontWeight: 900 }}>Welcome back</div>
+                  <div style={{ color: UI.colors.muted, marginTop: 6, fontSize: 13 }}>Sign in or create a customer account.</div>
+                </div>
+              </div>
+
+              <ActionRow style={{ marginTop: 14 }}>
+                <Button
+                  type="button"
+                  variant={authTab === 'login' ? 'primary' : 'ghost'}
+                  onClick={() => setAuthTab('login')}
+                  style={{ flex: 1, justifyContent: 'center' }}
+                >
+                  Sign in
+                </Button>
+                <Button
+                  type="button"
+                  variant={authTab === 'register' ? 'primary' : 'ghost'}
+                  onClick={() => setAuthTab('register')}
+                  style={{ flex: 1, justifyContent: 'center' }}
+                >
+                  Create account
+                </Button>
+              </ActionRow>
+
+              {authTab === 'login' ? (
+                <form onSubmit={login} style={{ display: 'grid', gap: 12, marginTop: 14 }}>
+                  <Field label="Username">
+                    <Input value={loginUsername} onChange={(e) => setLoginUsername(e.target.value)} placeholder="username" required />
+                  </Field>
+                  <Field label="Password">
+                    <Input
+                      value={loginPassword}
+                      onChange={(e) => setLoginPassword(e.target.value)}
+                      placeholder="password"
+                      type="password"
+                      required
+                    />
+                  </Field>
+                  <Button type="submit">Login</Button>
+                  {loginError ? <div style={{ color: UI.colors.danger, fontSize: 13 }}>{loginError}</div> : null}
+                </form>
+              ) : (
+                <form onSubmit={register} style={{ display: 'grid', gap: 12, marginTop: 14 }}>
+                  <Field label="Username">
+                    <Input value={registerUsername} onChange={(e) => setRegisterUsername(e.target.value)} placeholder="username" />
+                  </Field>
+                  <Field label="Email" hint="Optional">
+                    <Input
+                      value={registerEmail}
+                      onChange={(e) => {
+                        setRegisterEmail(e.target.value)
+                        setRegisterOtpSent(false)
+                        setRegisterOtpCode('')
+                        setRegisterVerificationToken('')
+                      }}
+                      placeholder="email"
+                    />
+                  </Field>
+                  {registerEmail.trim() ? (
+                    <Field label="Email OTP" hint={registerVerificationToken ? 'Verified' : registerOtpSent ? 'Check your inbox' : 'Click Create to send OTP'}>
+                      <Input
+                        value={registerOtpCode}
+                        onChange={(e) => setRegisterOtpCode(e.target.value)}
+                        placeholder="6-digit code"
+                        disabled={!!registerVerificationToken}
+                      />
+                    </Field>
+                  ) : null}
+                  <Field label="Password">
+                    <Input value={registerPassword} onChange={(e) => setRegisterPassword(e.target.value)} placeholder="password" type="password" />
+                  </Field>
+                  <Button type="submit" disabled={registerOtpLoading}>
+                    {registerOtpLoading ? 'Working…' : 'Create'}
+                  </Button>
+                  {registerError ? <div style={{ color: UI.colors.danger, fontSize: 13 }}>{registerError}</div> : null}
+                </form>
+              )}
+            </Card>
+          </div>
         ) : (
           <div
             style={{
               display: 'grid',
-              gridTemplateColumns: 'minmax(320px, 380px) 1fr',
-              gap: 16,
+              gridTemplateColumns: '260px 420px 1fr',
+              gap: 12,
               alignItems: 'start',
             }}
           >
-            <div style={{ display: 'grid', gap: 16 }}>
-              <Card>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div style={{ fontSize: 16, fontWeight: 700 }}>Tickets</div>
-                  <Button variant="ghost" onClick={loadTickets} style={{ padding: '6px 10px' }}>
-                    Refresh
-                  </Button>
+            <div
+              style={{
+                position: 'sticky',
+                top: 72,
+                alignSelf: 'start',
+                height: 'calc(100vh - 96px)',
+                overflow: 'auto',
+                borderRadius: UI.radius,
+                background: UI.colors.sidebarBg,
+                border: `1px solid ${UI.colors.sidebarBorder}`,
+                boxShadow: '0 16px 40px rgba(0,0,0,0.25)',
+              }}
+            >
+              <div style={{ padding: 14 }}>
+                <div style={{ fontSize: 12, color: UI.colors.sidebarMuted, fontWeight: 800, marginBottom: 10 }}>Views</div>
+                <div style={{ display: 'grid', gap: 8 }}>
+                  <SidebarItem active={activePanel === 'tickets'} onClick={() => setActivePanel('tickets')}>
+                    Tickets
+                  </SidebarItem>
+                  {role === 'agent' || role === 'admin' ? (
+                    <SidebarItem active={activePanel === 'agent_queue'} onClick={() => setActivePanel('agent_queue')}>
+                      Agent queue
+                    </SidebarItem>
+                  ) : null}
+                  {role === 'customer' ? (
+                    <SidebarItem active={activePanel === 'new_ticket'} onClick={() => setActivePanel('new_ticket')}>
+                      New ticket
+                    </SidebarItem>
+                  ) : null}
+                  {role === 'agent' || role === 'admin' ? (
+                    <SidebarItem active={activePanel === 'presence'} onClick={() => setActivePanel('presence')}>
+                      Agent presence
+                    </SidebarItem>
+                  ) : null}
+                  {role === 'admin' ? (
+                    <>
+                      <SidebarItem active={activePanel === 'admin_users'} onClick={() => setActivePanel('admin_users')}>
+                        Admin: Users
+                      </SidebarItem>
+                      <SidebarItem active={activePanel === 'admin_analytics'} onClick={() => setActivePanel('admin_analytics')}>
+                        Admin: Analytics
+                      </SidebarItem>
+                    </>
+                  ) : null}
                 </div>
-                {ticketsError ? <div style={{ color: UI.colors.danger, marginTop: 8 }}>{ticketsError}</div> : null}
-                <form onSubmit={searchTickets} style={{ marginTop: 12, display: 'flex', gap: 10 }}>
-                  <Input
-                    value={ticketSearch}
-                    onChange={(e) => setTicketSearch(e.target.value)}
-                    placeholder="Search tickets…"
-                  />
-                  <Button type="submit" style={{ whiteSpace: 'nowrap' }} disabled={ticketSearchLoading}>
-                    {ticketSearchLoading ? 'Searching…' : 'Search'}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    onClick={async () => {
-                      setTicketSearch('')
-                      await loadTickets()
-                    }}
-                    style={{ whiteSpace: 'nowrap' }}
-                  >
-                    Clear
-                  </Button>
-                </form>
-                <div style={{ marginTop: 12, display: 'grid', gap: 8, maxHeight: 440, overflow: 'auto' }}>
-                  {tickets.map((t) => (
-                    <button
-                      key={t.id}
-                      onClick={() => setSelectedTicketId(t.id)}
-                      style={{
-                        textAlign: 'left',
-                        padding: 10,
-                        borderRadius: 10,
-                        border:
-                          selectedTicketId === t.id
-                            ? '1px solid rgba(96,165,250,0.55)'
-                            : `1px solid ${UI.colors.border}`,
-                        background: selectedTicketId === t.id ? 'rgba(96,165,250,0.10)' : UI.colors.surface2,
-                        color: UI.colors.text,
-                      }}
-                    >
-                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
-                        <div style={{ fontWeight: 750, color: UI.colors.text }}>#{t.id} {t.subject}</div>
-                        <StatusPill status={t.status} />
-                      </div>
-                      <div style={{ color: UI.colors.muted, fontSize: 12, marginTop: 6 }}>
-                        priority: {t.priority} • assigned_agent: {t.assigned_agent ?? '—'}
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              </Card>
 
-              {role === 'customer' ? (
-                <Card>
-                  <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>Create Ticket</div>
-                  <form onSubmit={createTicket} style={{ display: 'grid', gap: 8 }}>
-                    <Field label="Subject">
-                      <Input
-                        value={newTicketSubject}
-                        onChange={(e) => setNewTicketSubject(e.target.value)}
-                        placeholder="Subject"
-                        required
-                      />
-                    </Field>
-                    <Field label="Description">
-                      <Textarea
-                        value={newTicketDescription}
-                        onChange={(e) => setNewTicketDescription(e.target.value)}
-                        placeholder="Description"
-                        rows={3}
-                      />
-                    </Field>
-                    <Field label="Priority">
-                      <Select value={newTicketPriority} onChange={(e) => setNewTicketPriority(e.target.value)}>
+                <div style={{ marginTop: 14, borderTop: `1px solid ${UI.colors.sidebarBorder}`, paddingTop: 14 }}>
+                  {activePanel === 'new_ticket' && role === 'customer' ? (
+                    <div style={{ display: 'grid', gap: 10 }}>
+                      <div style={{ fontWeight: 900, color: UI.colors.sidebarText }}>Create ticket</div>
+                      <form onSubmit={createTicket} style={{ display: 'grid', gap: 8 }}>
+                        <Field label="Subject">
+                          <Input
+                            value={newTicketSubject}
+                            onChange={(e) => setNewTicketSubject(e.target.value)}
+                            placeholder="Subject"
+                            required
+                          />
+                        </Field>
+                        <Field label="Description">
+                          <Textarea
+                            value={newTicketDescription}
+                            onChange={(e) => setNewTicketDescription(e.target.value)}
+                            placeholder="Description"
+                            rows={3}
+                          />
+                        </Field>
+                        <Field label="Priority">
+                          <Select value={newTicketPriority} onChange={(e) => setNewTicketPriority(e.target.value)}>
+                            <option value="LOW">LOW</option>
+                            <option value="MEDIUM">MEDIUM</option>
+                            <option value="HIGH">HIGH</option>
+                            <option value="URGENT">URGENT</option>
+                          </Select>
+                        </Field>
+                        <Button type="submit">Create</Button>
+                      </form>
+                    </div>
+                  ) : null}
+
+                  {activePanel === 'presence' && (role === 'agent' || role === 'admin') ? (
+                    <div style={{ display: 'grid', gap: 10 }}>
+                      <div style={{ fontWeight: 900, color: UI.colors.sidebarText }}>Availability</div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center' }}>
+                        <div style={{ color: UI.colors.sidebarMuted, fontSize: 12 }}>
+                          {availability?.is_available ? 'Online' : 'Offline'}
+                        </div>
+                        <div
+                          style={{
+                            fontSize: 12,
+                            fontWeight: 800,
+                            color: availability?.is_available ? UI.colors.success : UI.colors.sidebarMuted,
+                            background: availability?.is_available ? 'rgba(22,163,74,0.14)' : 'rgba(255,255,255,0.08)',
+                            border: `1px solid ${UI.colors.sidebarBorder}`,
+                            borderRadius: 999,
+                            padding: '4px 10px',
+                          }}
+                        >
+                          {availability?.is_available ? 'Online' : 'Offline'}
+                        </div>
+                      </div>
+
+                      <div style={{ color: UI.colors.sidebarMuted, fontSize: 12 }}>
+                        Active: {availability?.active_assigned_count ?? '—'} / {availability?.capacity ?? '—'}
+                      </div>
+                      <ActionRow>
+                        <Button
+                          variant="primary"
+                          onClick={() => toggleAvailability(true)}
+                          style={{ padding: '8px 10px' }}
+                          disabled={
+                            Boolean(availability?.is_available) ||
+                            (typeof availability?.active_assigned_count === 'number' &&
+                              typeof availability?.capacity === 'number' &&
+                              availability.capacity > 0 &&
+                              availability.active_assigned_count >= availability.capacity)
+                          }
+                        >
+                          Go online
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          onClick={() => toggleAvailability(false)}
+                          style={{ padding: '8px 10px', border: `1px solid ${UI.colors.sidebarBorder}`, background: 'rgba(255,255,255,0.06)', color: UI.colors.sidebarText }}
+                          disabled={!Boolean(availability?.is_available)}
+                        >
+                          Go offline
+                        </Button>
+                      </ActionRow>
+                      {typeof availability?.active_assigned_count === 'number' &&
+                      typeof availability?.capacity === 'number' &&
+                      availability.capacity > 0 &&
+                      availability.active_assigned_count >= availability.capacity ? (
+                        <div style={{ color: UI.colors.sidebarMuted, fontSize: 12 }}>
+                          You are at capacity. Resolve/close a ticket to go online again.
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : null}
+
+                  {activePanel === 'agent_queue' && (role === 'agent' || role === 'admin') ? (
+                    <div style={{ display: 'grid', gap: 10 }}>
+                      <div style={{ fontWeight: 900, color: UI.colors.sidebarText }}>Agent queue</div>
+                      <div style={{ color: UI.colors.sidebarMuted, fontSize: 12 }}>
+                        Sorted by: {agentQueueSort}
+                      </div>
+                      <Select value={agentQueueSort} onChange={(e) => setAgentQueueSort(e.target.value)}>
+                        <option value="oldest">Oldest</option>
+                        <option value="priority">Priority</option>
+                      </Select>
+
+                      {(() => {
+                        const grouped = {
+                          OPEN: [],
+                          ASSIGNED: [],
+                          IN_PROGRESS: [],
+                          WAITING_ON_CUSTOMER: [],
+                          RESOLVED: [],
+                          CLOSED: [],
+                        }
+                        for (const t of tickets) {
+                          const k = t.status || 'OPEN'
+                          if (!grouped[k]) grouped[k] = []
+                          grouped[k].push(t)
+                        }
+
+                        const order = ['OPEN', 'ASSIGNED', 'IN_PROGRESS', 'WAITING_ON_CUSTOMER', 'RESOLVED', 'CLOSED']
+                        return (
+                          <div style={{ display: 'grid', gap: 10 }}>
+                            {order.map((k) => {
+                              const list = sortTickets(grouped[k] || [], agentQueueSort)
+                              if (list.length === 0) return null
+                              return (
+                                <div key={k} style={{ display: 'grid', gap: 8, padding: 10, borderRadius: 12, border: `1px solid ${UI.colors.sidebarBorder}`, background: UI.colors.sidebarSurface }}>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+                                    <div style={{ color: UI.colors.sidebarText, fontWeight: 900, fontSize: 12 }}>{k}</div>
+                                    <div style={{ color: UI.colors.sidebarMuted, fontSize: 12 }}>{list.length}</div>
+                                  </div>
+                                  <div style={{ display: 'grid', gap: 6 }}>
+                                    {list.slice(0, 20).map((t) => (
+                                      <button
+                                        key={t.id}
+                                        onClick={() => setSelectedTicketId(t.id)}
+                                        style={{
+                                          textAlign: 'left',
+                                          width: '100%',
+                                          padding: '8px 10px',
+                                          borderRadius: 10,
+                                          border: `1px solid ${UI.colors.sidebarBorder}`,
+                                          background: 'rgba(255,255,255,0.06)',
+                                          color: UI.colors.sidebarText,
+                                          cursor: 'pointer',
+                                        }}
+                                      >
+                                        <div style={{ fontWeight: 900, fontSize: 12 }}>#{t.id} {t.subject}</div>
+                                        <div style={{ fontSize: 12, color: UI.colors.sidebarMuted, marginTop: 2 }}>
+                                          {t.priority}
+                                        </div>
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                              )
+                            })}
+                          </div>
+                        )
+                      })()}
+                    </div>
+                  ) : null}
+
+                  {activePanel === 'admin_users' && role === 'admin' ? (
+                    <div style={{ display: 'grid', gap: 10 }}>
+                      <div style={{ fontWeight: 900, color: UI.colors.sidebarText }}>Create user</div>
+                      <form onSubmit={adminCreateUser} style={{ display: 'grid', gap: 8 }}>
+                        <Field label="Username">
+                          <Input
+                            value={adminNewUsername}
+                            onChange={(e) => setAdminNewUsername(e.target.value)}
+                            placeholder="username"
+                            required
+                          />
+                        </Field>
+                        <Field label="Email" hint="Optional">
+                          <Input value={adminNewEmail} onChange={(e) => setAdminNewEmail(e.target.value)} placeholder="email" />
+                        </Field>
+                        <Field label="Password">
+                          <Input
+                            value={adminNewPassword}
+                            onChange={(e) => setAdminNewPassword(e.target.value)}
+                            placeholder="password"
+                            type="password"
+                            required
+                          />
+                        </Field>
+                        <Field label="Role">
+                          <Select value={adminNewRole} onChange={(e) => setAdminNewRole(e.target.value)}>
+                            <option value="agent">agent</option>
+                            <option value="admin">admin</option>
+                            <option value="customer">customer</option>
+                          </Select>
+                        </Field>
+                        <Button type="submit">Create user</Button>
+                        {adminCreateOk ? <div style={{ color: UI.colors.success }}>{adminCreateOk}</div> : null}
+                        {adminCreateError ? <div style={{ color: UI.colors.danger }}>{adminCreateError}</div> : null}
+                      </form>
+                    </div>
+                  ) : null}
+
+                  {activePanel === 'admin_analytics' && role === 'admin' ? (
+                    <div style={{ display: 'grid', gap: 10 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div style={{ fontWeight: 900, color: UI.colors.sidebarText }}>Analytics</div>
+                        <Button
+                          variant="ghost"
+                          onClick={() => {
+                            setAnalyticsSummary(null)
+                            setAnalyticsResolution(null)
+                            setAnalyticsVolume(null)
+                            setAnalyticsError('')
+                            apiFetch('/api/analytics/summary/', { token })
+                              .then((s) => setAnalyticsSummary(s))
+                              .catch((e) => setAnalyticsError(e.message))
+                            apiFetch('/api/analytics/resolution/', { token })
+                              .then((r) => setAnalyticsResolution(r))
+                              .catch((e) => setAnalyticsError(e.message))
+                            apiFetch('/api/analytics/volume/?days=30', { token })
+                              .then((v) => setAnalyticsVolume(v))
+                              .catch((e) => setAnalyticsError(e.message))
+                          }}
+                          style={{ padding: '6px 10px' }}
+                        >
+                          Refresh
+                        </Button>
+                      </div>
+                      {analyticsError ? <div style={{ color: UI.colors.danger, marginTop: 2 }}>{analyticsError}</div> : null}
+                      <div style={{ display: 'grid', gap: 8 }}>
+                        <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}`, background: UI.colors.surface2 }}>
+                          <div style={{ color: UI.colors.muted, fontSize: 12 }}>Total tickets</div>
+                          <div style={{ fontSize: 18, fontWeight: 900 }}>{analyticsSummary?.total ?? '—'}</div>
+                        </div>
+                        <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}`, background: UI.colors.surface2 }}>
+                          <div style={{ color: UI.colors.muted, fontSize: 12 }}>Open / Unresolved</div>
+                          <div style={{ fontSize: 18, fontWeight: 900 }}>{analyticsSummary?.open_like ?? '—'}</div>
+                        </div>
+                        <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}`, background: UI.colors.surface2 }}>
+                          <div style={{ color: UI.colors.muted, fontSize: 12 }}>Avg resolution (seconds)</div>
+                          <div style={{ fontSize: 16, fontWeight: 900 }}>{analyticsResolution?.avg_resolution_seconds ?? '—'}</div>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+
+            <Card>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ fontSize: 14, fontWeight: 900 }}>Tickets</div>
+                <Button variant="ghost" onClick={loadTickets} style={{ padding: '6px 10px' }}>
+                  Refresh
+                </Button>
+              </div>
+              {ticketsError ? <div style={{ color: UI.colors.danger, marginTop: 8 }}>{ticketsError}</div> : null}
+
+              <div style={{ marginTop: 12, display: 'grid', gap: 10 }}>
+                <ActionRow>
+                  <div style={{ flex: '1 1 160px', minWidth: 0 }}>
+                    <Select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
+                      <option value="">All status</option>
+                      <option value="OPEN">OPEN</option>
+                      <option value="ASSIGNED">ASSIGNED</option>
+                      <option value="IN_PROGRESS">IN_PROGRESS</option>
+                      <option value="WAITING_ON_CUSTOMER">WAITING_ON_CUSTOMER</option>
+                      <option value="RESOLVED">RESOLVED</option>
+                      <option value="CLOSED">CLOSED</option>
+                    </Select>
+                  </div>
+                  <div style={{ flex: '1 1 160px', minWidth: 0 }}>
+                    <Select value={filterPriority} onChange={(e) => setFilterPriority(e.target.value)}>
+                      <option value="">All priority</option>
                       <option value="LOW">LOW</option>
                       <option value="MEDIUM">MEDIUM</option>
                       <option value="HIGH">HIGH</option>
                       <option value="URGENT">URGENT</option>
-                      </Select>
-                    </Field>
-                    <Button type="submit">Create</Button>
-                  </form>
-                </Card>
-              ) : null}
-
-              {role === 'agent' || role === 'admin' ? (
-                <Card>
-                  <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>Agent Presence</div>
-                  <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-                    <div style={{ color: UI.colors.text, fontWeight: 650 }}>
-                      Available: {availability?.role ? String(availability.is_available) : String(availability?.is_available ?? '—')}
-                    </div>
-                    <Button variant="primary" onClick={() => toggleAvailability(true)} style={{ padding: '8px 10px' }}>
-                      Go online
-                    </Button>
-                    <Button variant="ghost" onClick={() => toggleAvailability(false)} style={{ padding: '8px 10px' }}>
-                      Go offline
-                    </Button>
+                    </Select>
                   </div>
-                </Card>
-              ) : null}
-
-              {role === 'admin' ? (
-                <Card>
-                  <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>Admin: Create User</div>
-                  <form onSubmit={adminCreateUser} style={{ display: 'grid', gap: 8 }}>
-                    <Field label="Username">
-                      <Input
-                        value={adminNewUsername}
-                        onChange={(e) => setAdminNewUsername(e.target.value)}
-                        placeholder="username"
-                        required
-                      />
-                    </Field>
-                    <Field label="Email" hint="Optional">
-                      <Input
-                        value={adminNewEmail}
-                        onChange={(e) => setAdminNewEmail(e.target.value)}
-                        placeholder="email"
-                      />
-                    </Field>
-                    <Field label="Password">
-                      <Input
-                        value={adminNewPassword}
-                        onChange={(e) => setAdminNewPassword(e.target.value)}
-                        placeholder="password"
-                        type="password"
-                        required
-                      />
-                    </Field>
-                    <Field label="Role">
-                      <Select value={adminNewRole} onChange={(e) => setAdminNewRole(e.target.value)}>
-                      <option value="agent">agent</option>
-                      <option value="admin">admin</option>
-                      <option value="customer">customer</option>
-                      </Select>
-                    </Field>
-                    <Button type="submit">Create user</Button>
-                    {adminCreateOk ? <div style={{ color: UI.colors.success }}>{adminCreateOk}</div> : null}
-                    {adminCreateError ? <div style={{ color: UI.colors.danger }}>{adminCreateError}</div> : null}
-                  </form>
-                </Card>
-              ) : null}
-
-              {role === 'admin' ? (
-                <Card>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <div style={{ fontSize: 16, fontWeight: 700 }}>Admin: Analytics</div>
-                    <Button
-                      variant="ghost"
-                      onClick={() => {
-                        setAnalyticsSummary(null)
-                        setAnalyticsResolution(null)
-                        setAnalyticsVolume(null)
-                        setAnalyticsError('')
-                        apiFetch('/api/analytics/summary/', { token })
-                          .then((s) => setAnalyticsSummary(s))
-                          .catch((e) => setAnalyticsError(e.message))
-                        apiFetch('/api/analytics/resolution/', { token })
-                          .then((r) => setAnalyticsResolution(r))
-                          .catch((e) => setAnalyticsError(e.message))
-                        apiFetch('/api/analytics/volume/?days=30', { token })
-                          .then((v) => setAnalyticsVolume(v))
-                          .catch((e) => setAnalyticsError(e.message))
-                      }}
-                      style={{ padding: '6px 10px' }}
-                    >
-                      Refresh
-                    </Button>
+                  {(role === 'admin' || role === 'agent') && (
+                    <div style={{ flex: '1 1 160px', minWidth: 0 }}>
+                      <Input value={filterAssignedAgent} onChange={(e) => setFilterAssignedAgent(e.target.value)} placeholder="assignee id" />
+                    </div>
+                  )}
+                  <div style={{ flex: '1 1 160px', minWidth: 0 }}>
+                    <Input value={filterCreatedFrom} onChange={(e) => setFilterCreatedFrom(e.target.value)} placeholder="from YYYY-MM-DD" />
                   </div>
-
-                  {analyticsError ? <div style={{ color: UI.colors.danger, marginTop: 8 }}>{analyticsError}</div> : null}
-
-                  <div style={{ marginTop: 12, display: 'grid', gap: 10 }}>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                      <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}`, background: UI.colors.surface2 }}>
-                        <div style={{ color: UI.colors.muted, fontSize: 12 }}>Total tickets</div>
-                        <div style={{ fontSize: 20, fontWeight: 800 }}>{analyticsSummary?.total ?? '—'}</div>
-                      </div>
-                      <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}`, background: UI.colors.surface2 }}>
-                        <div style={{ color: UI.colors.muted, fontSize: 12 }}>Open / Unresolved</div>
-                        <div style={{ fontSize: 20, fontWeight: 800 }}>{analyticsSummary?.open_like ?? '—'}</div>
-                      </div>
-                    </div>
-
-                    <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}`, background: UI.colors.surface2 }}>
-                      <div style={{ color: UI.colors.muted, fontSize: 12 }}>Avg resolution (seconds)</div>
-                      <div style={{ fontSize: 18, fontWeight: 800 }}>{analyticsResolution?.avg_resolution_seconds ?? '—'}</div>
-                      <div style={{ color: UI.colors.muted, fontSize: 12, marginTop: 4 }}>
-                        resolved_count: {analyticsResolution?.resolved_count ?? '—'}
-                      </div>
-                    </div>
-
-                    <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}`, background: UI.colors.surface2 }}>
-                      <div style={{ color: UI.colors.muted, fontSize: 12 }}>Volume (last 30 days)</div>
-                      <div style={{ color: UI.colors.muted, fontSize: 12, marginTop: 6 }}>
-                        {analyticsVolume?.series ? `days with tickets: ${analyticsVolume.series.filter((x) => x.count > 0).length}` : '—'}
-                      </div>
-                    </div>
+                  <div style={{ flex: '1 1 160px', minWidth: 0 }}>
+                    <Input value={filterCreatedTo} onChange={(e) => setFilterCreatedTo(e.target.value)} placeholder="to YYYY-MM-DD" />
                   </div>
-                </Card>
-              ) : null}
-            </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={async () => {
+                      setFilterStatus('')
+                      setFilterPriority('')
+                      setFilterAssignedAgent('')
+                      setFilterCreatedFrom('')
+                      setFilterCreatedTo('')
+                      await loadTickets()
+                    }}
+                    style={{ whiteSpace: 'nowrap' }}
+                  >
+                    Clear filters
+                  </Button>
+                </ActionRow>
+              </div>
+
+              <form onSubmit={searchTickets} style={{ marginTop: 12 }}>
+                <ActionRow>
+                <div style={{ flex: '1 1 220px', minWidth: 0 }}>
+                  <Input value={ticketSearch} onChange={(e) => setTicketSearch(e.target.value)} placeholder="Search…" />
+                </div>
+                <Button type="submit" style={{ whiteSpace: 'nowrap' }} disabled={ticketSearchLoading}>
+                  {ticketSearchLoading ? 'Searching…' : 'Search'}
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={async () => {
+                    setTicketSearch('')
+                    await loadTickets()
+                  }}
+                  style={{ whiteSpace: 'nowrap' }}
+                >
+                  Clear
+                </Button>
+                </ActionRow>
+              </form>
+
+              <div
+                style={{
+                  marginTop: 12,
+                  height: 'calc(100vh - 240px)',
+                  overflow: 'auto',
+                  border: `1px solid ${UI.colors.border}`,
+                  borderRadius: 12,
+                }}
+              >
+                <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0 }}>
+                  <thead>
+                    <tr style={{ background: UI.colors.surface2 }}>
+                      <th style={{ textAlign: 'left', padding: '10px 12px', fontSize: 12, color: UI.colors.muted, position: 'sticky', top: 0, background: UI.colors.surface2, borderBottom: `1px solid ${UI.colors.border}` }}>ID</th>
+                      <th style={{ textAlign: 'left', padding: '10px 12px', fontSize: 12, color: UI.colors.muted, position: 'sticky', top: 0, background: UI.colors.surface2, borderBottom: `1px solid ${UI.colors.border}` }}>Subject</th>
+                      <th style={{ textAlign: 'left', padding: '10px 12px', fontSize: 12, color: UI.colors.muted, position: 'sticky', top: 0, background: UI.colors.surface2, borderBottom: `1px solid ${UI.colors.border}` }}>Status</th>
+                      <th style={{ textAlign: 'left', padding: '10px 12px', fontSize: 12, color: UI.colors.muted, position: 'sticky', top: 0, background: UI.colors.surface2, borderBottom: `1px solid ${UI.colors.border}` }}>Priority</th>
+                      <th style={{ textAlign: 'left', padding: '10px 12px', fontSize: 12, color: UI.colors.muted, position: 'sticky', top: 0, background: UI.colors.surface2, borderBottom: `1px solid ${UI.colors.border}` }}>Assignee</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {tickets.map((t) => {
+                      const active = selectedTicketId === t.id
+                      return (
+                        <tr
+                          key={t.id}
+                          onClick={() => setSelectedTicketId(t.id)}
+                          style={{
+                            cursor: 'pointer',
+                            background: active ? 'rgba(37,99,235,0.08)' : UI.colors.surface,
+                          }}
+                          onMouseEnter={(e) => {
+                            try {
+                              if (!active) e.currentTarget.style.background = 'rgba(15,23,42,0.04)'
+                            } catch {
+                              // ignore
+                            }
+                          }}
+                          onMouseLeave={(e) => {
+                            try {
+                              e.currentTarget.style.background = active ? 'rgba(37,99,235,0.08)' : UI.colors.surface
+                            } catch {
+                              // ignore
+                            }
+                          }}
+                        >
+                          <td style={{ padding: '10px 12px', borderBottom: `1px solid ${UI.colors.border}`, fontWeight: 800, fontSize: 13 }}>#{t.id}</td>
+                          <td style={{ padding: '10px 12px', borderBottom: `1px solid ${UI.colors.border}`, fontSize: 13 }}>
+                            <div style={{ fontWeight: 800 }}>{t.subject}</div>
+                          </td>
+                          <td style={{ padding: '10px 12px', borderBottom: `1px solid ${UI.colors.border}` }}>
+                            <StatusPill status={t.status} />
+                          </td>
+                          <td style={{ padding: '10px 12px', borderBottom: `1px solid ${UI.colors.border}`, fontSize: 13, color: UI.colors.muted }}>{t.priority}</td>
+                          <td style={{ padding: '10px 12px', borderBottom: `1px solid ${UI.colors.border}`, fontSize: 13, color: UI.colors.muted }}>
+                            {t.assigned_agent ?? '—'}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
 
             <Card>
               {!selectedTicket ? (
                 <div style={{ color: UI.colors.muted }}>Select a ticket to view details.</div>
               ) : (
                 <div style={{ display: 'grid', gap: 12 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <div style={{ fontSize: 16, fontWeight: 700 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                    <div style={{ fontSize: 15, fontWeight: 900, minWidth: 0, wordBreak: 'break-word', flex: '1 1 260px' }}>
                       #{selectedTicket.id} {selectedTicket.subject}
                     </div>
                     <StatusPill status={selectedTicket.status} />
                   </div>
-                  <div style={{ color: UI.colors.muted }}>{selectedTicket.description}</div>
+                  <div style={{ color: UI.colors.muted, fontSize: 13 }}>{selectedTicket.description}</div>
                   <div style={{ color: UI.colors.muted, fontSize: 12 }}>
                     assigned_agent: {selectedTicket.assigned_agent ?? '—'}
                   </div>
 
-                  <div
-                    style={{
-                      borderTop: '1px solid rgba(0,0,0,0.08)',
-                      paddingTop: 12,
-                      display: 'grid',
-                      gap: 10,
-                    }}
-                  >
-                    {(role === 'agent' || role === 'admin') && (
-                      <div style={{ display: 'grid', gap: 10 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-                          <div style={{ fontSize: 14, fontWeight: 700 }}>AI Draft</div>
-                          <Button
-                            type="button"
-                            variant="primary"
-                            onClick={generateAIDraft}
-                            style={{ padding: '8px 10px' }}
-                            disabled={aiDraftLoading}
-                          >
-                            {aiDraftLoading ? 'Generating…' : 'Generate'}
-                          </Button>
-                        </div>
-                        <Textarea
-                          value={aiDraft}
-                          onChange={(e) => setAiDraft(e.target.value)}
-                          placeholder="AI suggested reply will appear here…"
-                          rows={3}
-                        />
-                        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-                          <Button type="button" variant="ghost" onClick={() => setAiDraft('')}>
-                            Clear
-                          </Button>
-                          <Button type="button" onClick={sendAIDraft}>
-                            Send draft
-                          </Button>
-                        </div>
-                        {aiDraftError ? <div style={{ color: UI.colors.danger, fontSize: 13 }}>{aiDraftError}</div> : null}
+                  {(role === 'agent' || role === 'admin') && (
+                    <div style={{ display: 'grid', gap: 10, padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}`, background: UI.colors.surface2 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
+                        <div style={{ fontSize: 13, fontWeight: 900 }}>AI Draft</div>
+                        <Button
+                          type="button"
+                          variant="primary"
+                          onClick={generateAIDraft}
+                          style={{ padding: '8px 10px' }}
+                          disabled={aiDraftLoading}
+                        >
+                          {aiDraftLoading ? 'Generating…' : 'Generate'}
+                        </Button>
                       </div>
-                    )}
+                      <Textarea
+                        value={aiDraft}
+                        onChange={(e) => setAiDraft(e.target.value)}
+                        placeholder="AI suggested reply will appear here…"
+                        rows={3}
+                      />
+                      <ActionRow>
+                        <Button type="button" variant="ghost" onClick={() => setAiDraft('')} style={{ whiteSpace: 'nowrap' }}>
+                          Clear
+                        </Button>
+                        <Button type="button" onClick={sendAIDraft} style={{ whiteSpace: 'nowrap' }}>
+                          Send draft
+                        </Button>
+                      </ActionRow>
+                      {aiDraftError ? <div style={{ color: UI.colors.danger, fontSize: 13 }}>{aiDraftError}</div> : null}
+                    </div>
+                  )}
 
-                    <div style={{ fontSize: 14, fontWeight: 700 }}>Messages</div>
-                    <div style={{ maxHeight: 420, overflow: 'auto', display: 'grid', gap: 10 }}>
-                      {messages.map((m) => (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <div style={{ fontSize: 13, fontWeight: 900 }}>Conversation</div>
+                    <div style={{ color: UI.colors.muted, fontSize: 12 }}>{messages.length} messages</div>
+                  </div>
+
+                  <div style={{ height: 'calc(100vh - 420px)', overflow: 'auto', display: 'grid', gap: 10, paddingRight: 4 }}>
+                    {messages.map((m) => (
+                      <div
+                        key={m.id}
+                        style={{
+                          display: 'grid',
+                          gridTemplateColumns: '18px 1fr',
+                          gap: 10,
+                          alignItems: 'start',
+                        }}
+                      >
                         <div
-                          key={m.id}
                           style={{
-                            padding: 10,
-                            borderRadius: 10,
-                            background: m.is_internal ? 'rgba(251,191,36,0.10)' : UI.colors.surface2,
+                            width: 10,
+                            height: 10,
+                            borderRadius: 999,
+                            background: m.is_internal ? UI.colors.warning : UI.colors.primary,
+                            marginTop: 6,
+                            boxShadow: `0 0 0 4px ${m.is_internal ? 'rgba(217,119,6,0.14)' : 'rgba(37,99,235,0.12)'}`,
+                          }}
+                        />
+                        <div
+                          style={{
+                            padding: 12,
+                            borderRadius: 12,
+                            background: UI.colors.surface,
                             border: `1px solid ${UI.colors.border}`,
                           }}
                         >
-                          <div style={{ fontSize: 12, color: UI.colors.muted, marginBottom: 6 }}>
-                            author: {m.author ?? '—'} • {m.is_internal ? 'internal' : 'public'}
+                          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'baseline' }}>
+                            <div style={{ fontSize: 13, fontWeight: 900 }}>
+                              {m.author ?? '—'}
+                              <span style={{ fontSize: 12, color: UI.colors.muted, fontWeight: 650 }}> • {m.is_internal ? 'Internal note' : 'Public reply'}</span>
+                            </div>
                           </div>
-                          <div style={{ whiteSpace: 'pre-wrap' }}>{m.body}</div>
+                          <div style={{ whiteSpace: 'pre-wrap', fontSize: 13, marginTop: 6, color: UI.colors.text }}>{m.body}</div>
+                          {Array.isArray(m.attachments) && m.attachments.length > 0 ? (
+                            <div style={{ marginTop: 10, display: 'grid', gap: 6 }}>
+                              {m.attachments.map((a) => (
+                                <div key={a.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center' }}>
+                                  <a
+                                    href={toAbsoluteUrl(a.url)}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    style={{ fontSize: 12, color: UI.colors.primary, textDecoration: 'none', fontWeight: 650 }}
+                                  >
+                                    {a.filename || 'attachment'}
+                                  </a>
+                                  {a.url ? (
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      style={{ padding: '6px 10px', whiteSpace: 'nowrap' }}
+                                      onClick={() => {
+                                        setViewerAttachment(a)
+                                        setViewerOpen(true)
+                                      }}
+                                    >
+                                      View
+                                    </Button>
+                                  ) : null}
+                                </div>
+                              ))}
+                            </div>
+                          ) : null}
                         </div>
-                      ))}
-                    </div>
-
-                    <form onSubmit={sendMessage} style={{ display: 'grid', gap: 8 }}>
-                      <Textarea
-                        value={newMessage}
-                        onChange={(e) => setNewMessage(e.target.value)}
-                        placeholder="Write a message..."
-                        rows={3}
-                        required
-                      />
-                      {(role === 'agent' || role === 'admin') && (
-                        <label style={{ display: 'flex', gap: 8, alignItems: 'center', color: UI.colors.text }}>
-                          <input
-                            type="checkbox"
-                            checked={newMessageInternal}
-                            onChange={(e) => setNewMessageInternal(e.target.checked)}
-                          />
-                          Internal note
-                        </label>
-                      )}
-                      <Button type="submit">Send</Button>
-                    </form>
+                      </div>
+                    ))}
                   </div>
+
+                  <AttachmentViewer
+                    open={viewerOpen}
+                    attachment={viewerAttachment}
+                    onClose={() => {
+                      setViewerOpen(false)
+                      setViewerAttachment(null)
+                    }}
+                  />
+
+                  <form onSubmit={sendMessage} style={{ display: 'grid', gap: 8 }}>
+                    <Textarea
+                      value={newMessage}
+                      onChange={(e) => setNewMessage(e.target.value)}
+                      placeholder="Reply…"
+                      rows={3}
+                      required
+                    />
+                    <input
+                      type="file"
+                      multiple
+                      onChange={(e) => {
+                        const files = Array.from(e.target.files || [])
+                        setNewMessageFiles(files)
+                      }}
+                    />
+                    {(role === 'agent' || role === 'admin') && (
+                      <label style={{ display: 'flex', gap: 8, alignItems: 'center', color: UI.colors.text, fontSize: 13 }}>
+                        <input
+                          type="checkbox"
+                          checked={newMessageInternal}
+                          onChange={(e) => setNewMessageInternal(e.target.checked)}
+                        />
+                        Internal note
+                      </label>
+                    )}
+                    <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                      <Button type="submit">Send</Button>
+                    </div>
+                  </form>
                 </div>
               )}
             </Card>

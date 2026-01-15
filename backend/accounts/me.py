@@ -25,7 +25,19 @@ class AvailabilityView(APIView):
             return Response({"detail": "Only agents/admins can view availability"}, status=status.HTTP_403_FORBIDDEN)
 
         profile, _ = UserProfile.objects.get_or_create(user=request.user)
-        return Response(UserProfileSerializer(profile).data)
+        from tickets.models import Ticket
+
+        active_statuses = [
+            Ticket.Status.OPEN,
+            Ticket.Status.ASSIGNED,
+            Ticket.Status.IN_PROGRESS,
+            Ticket.Status.WAITING_ON_CUSTOMER,
+        ]
+        active_count = Ticket.objects.filter(assigned_agent=request.user, status__in=active_statuses).count()
+
+        data = UserProfileSerializer(profile).data
+        data["active_assigned_count"] = active_count
+        return Response(data)
 
     def patch(self, request):
         role = get_user_role(request.user)
@@ -58,4 +70,16 @@ class AvailabilityView(APIView):
             for tid in unassigned:
                 assign_ticket.delay(int(tid))
 
-        return Response(UserProfileSerializer(profile).data)
+        from tickets.models import Ticket
+
+        active_statuses = [
+            Ticket.Status.OPEN,
+            Ticket.Status.ASSIGNED,
+            Ticket.Status.IN_PROGRESS,
+            Ticket.Status.WAITING_ON_CUSTOMER,
+        ]
+        active_count = Ticket.objects.filter(assigned_agent=request.user, status__in=active_statuses).count()
+
+        data = UserProfileSerializer(profile).data
+        data["active_assigned_count"] = active_count
+        return Response(data)

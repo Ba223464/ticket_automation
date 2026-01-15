@@ -2,24 +2,29 @@ import os
 import re
 
 import requests
+from django.contrib.auth import get_user_model
 from django.contrib.postgres.aggregates import StringAgg
 from django.contrib.postgres.search import SearchQuery, SearchRank, SearchVector
+from django.db.utils import OperationalError, ProgrammingError
 from django.db.models import Q, TextField, Value
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.throttling import UserRateThrottle
 
 from accounts.models import UserProfile
 from accounts.utils import get_user_role
-from tickets.models import Ticket, TicketMessage
+from tickets.models import Attachment, Ticket, TicketMessage
 from tickets.permissions import IsAgentOrAdmin
 from tickets.realtime import broadcast_ticket_event
 from tickets.serializers import TicketMessageSerializer, TicketSerializer
-from tickets.tasks import assign_ticket, send_ticket_email
+from tickets.tasks import assign_ticket, recompute_agent_availability, send_ticket_email
+
+User = get_user_model()
 
 
 class AIDraftThrottle(UserRateThrottle):
@@ -34,20 +39,50 @@ def _redact_pii(text: str) -> str:
     return text
 
 
+def _gemini_list_models(api_key: str) -> list[str]:
+    url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
+    res = requests.get(url, timeout=15)
+    if not res.ok:
+        return []
+    data = res.json() if res.content else {}
+    models = data.get("models") or []
+    out = []
+    for m in models:
+        name = (m.get("name") or "").strip()
+        if not name.startswith("models/"):
+            continue
+        supported = set(m.get("supportedGenerationMethods") or [])
+        if "generateContent" not in supported:
+            continue
+        out.append(name[len("models/") :])
+    return out
+
+
 def _gemini_generate(prompt: str) -> str:
     api_key = os.getenv("GEMINI_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError("GEMINI_API_KEY is not configured")
 
-    model_candidates = [
-        "gemini-2.5-flash",
-        "gemini-2.5-pro",
+    preferred = [
         "gemini-1.5-flash",
         "gemini-1.5-flash-latest",
         "gemini-1.5-pro",
         "gemini-1.5-pro-latest",
-        "gemini-pro",
+        "gemini-1.0-pro",
     ]
+
+    discovered = []
+    try:
+        discovered = _gemini_list_models(api_key)
+    except Exception:
+        discovered = []
+
+    if discovered:
+        model_candidates = [m for m in preferred if m in set(discovered)]
+        if not model_candidates:
+            model_candidates = discovered
+    else:
+        model_candidates = preferred
 
     payload = {
         "contents": [
@@ -82,7 +117,9 @@ def _gemini_generate(prompt: str) -> str:
     status_code = getattr(last_res, "status_code", "unknown")
     body = (getattr(last_res, "text", "") or "").strip()
     body = body[:1000]
-    raise RuntimeError(f"Gemini API error: HTTP {status_code} {body}")
+    raise RuntimeError(
+        f"Gemini API error: HTTP {status_code} {body} (tried models: {', '.join(model_candidates[:8])})"
+    )
 
 
 class TicketViewSet(viewsets.ModelViewSet):
@@ -92,6 +129,37 @@ class TicketViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         role = get_user_role(self.request.user)
         qs = Ticket.objects.all().order_by("-created_at")
+
+        status_filter = (self.request.query_params.get("status") or "").strip()
+        priority_filter = (self.request.query_params.get("priority") or "").strip()
+        assigned_agent_filter = (self.request.query_params.get("assigned_agent") or "").strip()
+        created_from = (self.request.query_params.get("created_from") or "").strip()
+        created_to = (self.request.query_params.get("created_to") or "").strip()
+
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+        if priority_filter:
+            qs = qs.filter(priority=priority_filter)
+        if assigned_agent_filter:
+            if assigned_agent_filter.isdigit():
+                qs = qs.filter(assigned_agent_id=int(assigned_agent_filter))
+            else:
+                user_match = User.objects.filter(
+                    Q(username__iexact=assigned_agent_filter) | Q(email__iexact=assigned_agent_filter)
+                ).first()
+                if user_match is not None:
+                    qs = qs.filter(assigned_agent_id=user_match.id)
+
+        if created_from:
+            try:
+                qs = qs.filter(created_at__date__gte=created_from)
+            except Exception:
+                pass
+        if created_to:
+            try:
+                qs = qs.filter(created_at__date__lte=created_to)
+            except Exception:
+                pass
 
         if role == UserProfile.Role.CUSTOMER:
             return qs.filter(customer=self.request.user)
@@ -123,7 +191,14 @@ class TicketViewSet(viewsets.ModelViewSet):
         if priority_filter:
             qs = qs.filter(priority=priority_filter)
         if assigned_agent_filter:
-            qs = qs.filter(assigned_agent_id=assigned_agent_filter)
+            if assigned_agent_filter.isdigit():
+                qs = qs.filter(assigned_agent_id=int(assigned_agent_filter))
+            else:
+                user_match = User.objects.filter(
+                    Q(username__iexact=assigned_agent_filter) | Q(email__iexact=assigned_agent_filter)
+                ).first()
+                if user_match is not None:
+                    qs = qs.filter(assigned_agent_id=user_match.id)
 
         msg_filter = Q(messages__is_internal=False)
         if role in {UserProfile.Role.AGENT, UserProfile.Role.ADMIN}:
@@ -154,7 +229,13 @@ class TicketViewSet(viewsets.ModelViewSet):
 
         return Response(TicketSerializer(qs[:50], many=True).data)
 
-    @action(detail=True, methods=["get", "post"], url_path="messages", permission_classes=[IsAuthenticated])
+    @action(
+        detail=True,
+        methods=["get", "post"],
+        url_path="messages",
+        permission_classes=[IsAuthenticated],
+        parser_classes=[MultiPartParser, FormParser],
+    )
     def messages(self, request, pk=None):
         ticket = self.get_object()
         role = get_user_role(request.user)
@@ -164,13 +245,43 @@ class TicketViewSet(viewsets.ModelViewSet):
                 qs = qs.filter(is_internal=False)
             return Response(TicketMessageSerializer(qs, many=True).data)
 
-        serializer = TicketMessageSerializer(data=request.data)
+        raw_internal = request.data.get("is_internal", False)
+        if isinstance(raw_internal, str):
+            raw_internal = raw_internal.strip().lower() in {"1", "true", "yes", "y", "on"}
+        is_internal = bool(raw_internal)
+
+        serializer = TicketMessageSerializer(
+            data={
+                "body": request.data.get("body", ""),
+                "is_internal": is_internal,
+            }
+        )
         serializer.is_valid(raise_exception=True)
-        is_internal = bool(request.data.get("is_internal", False))
         if is_internal and role == UserProfile.Role.CUSTOMER:
             return Response({"detail": "Customers cannot create internal messages"}, status=status.HTTP_403_FORBIDDEN)
 
         msg = serializer.save(ticket=ticket, author=request.user, is_internal=is_internal)
+
+        files = []
+        try:
+            files = request.FILES.getlist("files")
+        except Exception:
+            files = []
+
+        for f in files:
+            try:
+                Attachment.objects.create(
+                    ticket=ticket,
+                    message=msg,
+                    uploader=request.user,
+                    file=f,
+                    filename=getattr(f, "name", "") or "",
+                    content_type=getattr(f, "content_type", "") or "",
+                    size=int(getattr(f, "size", 0) or 0),
+                )
+            except (ProgrammingError, OperationalError):
+                # Attachments table may not be migrated yet; keep message send working.
+                break
 
         ticket.last_message_at = timezone.now()
         ticket.save(update_fields=["last_message_at", "updated_at"])
@@ -224,6 +335,9 @@ class TicketViewSet(viewsets.ModelViewSet):
             None,
             ticket.status,
         )
+
+        if ticket.assigned_agent_id is not None and new_status in {Ticket.Status.RESOLVED, Ticket.Status.CLOSED}:
+            recompute_agent_availability.delay(int(ticket.assigned_agent_id))
 
         return Response(TicketSerializer(ticket).data)
 

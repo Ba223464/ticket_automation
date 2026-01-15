@@ -26,8 +26,17 @@ def _dedupe_emails(emails):
     return out
 
 
-@shared_task
-def send_ticket_email(event_type: str, ticket_id: int, message_id: int | None = None, new_status: str | None = None):
+@shared_task(bind=True, autoretry_for=(Exception,), retry_backoff=True, retry_jitter=True, max_retries=3)
+def send_email(self, subject: str, body: str, to_emails: list[str]):
+    to_emails = _dedupe_emails(to_emails)
+    if not to_emails:
+        return True
+    send_mail(subject, body, None, to_emails, fail_silently=False)
+    return True
+
+
+@shared_task(bind=True, autoretry_for=(Exception,), retry_backoff=True, retry_jitter=True, max_retries=3)
+def send_ticket_email(self, event_type: str, ticket_id: int, message_id: int | None = None, new_status: str | None = None):
     try:
         ticket = Ticket.objects.select_related("customer", "assigned_agent").get(id=ticket_id)
     except Ticket.DoesNotExist:
@@ -84,7 +93,7 @@ def send_ticket_email(event_type: str, ticket_id: int, message_id: int | None = 
         ]
 
     body = "\n".join(lines)
-    send_mail(subject, body, None, to_emails, fail_silently=True)
+    send_email.delay(subject, body, to_emails)
     return True
 
 
@@ -138,6 +147,18 @@ def assign_ticket(ticket_id: int) -> bool:
             ticket.status = Ticket.Status.ASSIGNED
         ticket.save(update_fields=["assigned_agent", "status", "updated_at"])
 
+        try:
+            prof = getattr(selected, "profile", None)
+            if prof is not None:
+                cap = int(getattr(prof, "capacity", 0) or 0)
+                # selected.active_count was computed before assignment
+                if cap > 0 and (int(getattr(selected, "active_count", 0) or 0) + 1) >= cap:
+                    if prof.is_available:
+                        prof.is_available = False
+                        prof.save(update_fields=["is_available"])
+        except Exception:
+            pass
+
         broadcast_ticket_event(
             ticket.id,
             {
@@ -154,5 +175,40 @@ def assign_ticket(ticket_id: int) -> bool:
             None,
             ticket.status,
         )
+
+    return True
+
+
+@shared_task
+def recompute_agent_availability(agent_id: int) -> bool:
+    try:
+        agent = User.objects.select_related("profile").get(id=agent_id)
+    except User.DoesNotExist:
+        return False
+
+    prof = getattr(agent, "profile", None)
+    if prof is None or prof.role != UserProfile.Role.AGENT:
+        return False
+
+    cap = int(getattr(prof, "capacity", 0) or 0)
+    if cap <= 0:
+        # Treat 0 capacity as unavailable
+        if prof.is_available:
+            prof.is_available = False
+            prof.save(update_fields=["is_available"])
+        return True
+
+    active_statuses = [
+        Ticket.Status.OPEN,
+        Ticket.Status.ASSIGNED,
+        Ticket.Status.IN_PROGRESS,
+        Ticket.Status.WAITING_ON_CUSTOMER,
+    ]
+    active_count = Ticket.objects.filter(assigned_agent_id=agent.id, status__in=active_statuses).count()
+
+    should_be_available = active_count < cap
+    if bool(prof.is_available) != bool(should_be_available):
+        prof.is_available = bool(should_be_available)
+        prof.save(update_fields=["is_available"])
 
     return True
