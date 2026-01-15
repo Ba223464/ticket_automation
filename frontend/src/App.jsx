@@ -19,6 +19,26 @@ function sortTickets(list, mode) {
   return arr
 }
 
+function getSpeechRecognition() {
+  try {
+    return window.SpeechRecognition || window.webkitSpeechRecognition || null
+  } catch {
+    return null
+  }
+}
+
+function MicIcon({ active }) {
+  const color = active ? '#ffffff' : UI.colors.text
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <path
+        d="M12 14a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v5a3 3 0 0 0 3 3Zm-7-3a1 1 0 1 0-2 0 9 9 0 0 0 8 8.95V22a1 1 0 1 0 2 0v-2.05A9 9 0 0 0 21 11a1 1 0 1 0-2 0 7 7 0 0 1-14 0Z"
+        fill={color}
+      />
+    </svg>
+  )
+}
+
 function getWsBaseUrl() {
   return import.meta.env.VITE_WS_BASE_URL
 }
@@ -682,10 +702,123 @@ export default function App() {
 
   const [agentQueueSort, setAgentQueueSort] = useState('oldest')
 
+  const [sttTarget, setSttTarget] = useState(null)
+  const [sttListening, setSttListening] = useState(false)
+  const [sttError, setSttError] = useState('')
+  const sttRef = useRef(null)
+  const sttShouldRunRef = useRef(false)
+
   const [activePanel, setActivePanel] = useState('tickets')
   const [authTab, setAuthTab] = useState('login')
 
   const role = useMemo(() => user?.profile?.role || null, [user])
+
+  const sttSupported = useMemo(() => !!getSpeechRecognition(), [])
+
+  useEffect(() => {
+    return () => {
+      try {
+        sttShouldRunRef.current = false
+        sttRef.current?.stop?.()
+      } catch {
+        // ignore
+      }
+    }
+  }, [])
+
+  function stopStt({ clearError = true } = {}) {
+    try {
+      sttShouldRunRef.current = false
+      sttRef.current?.stop?.()
+    } catch {
+      // ignore
+    }
+    sttRef.current = null
+    setSttListening(false)
+    setSttTarget(null)
+    if (clearError) setSttError('')
+  }
+
+  function startStt(target) {
+    if (role !== 'customer') return
+    const SR = getSpeechRecognition()
+    if (!SR) return
+
+    try {
+      if (window.location?.protocol !== 'https:' && window.location?.hostname !== 'localhost') {
+        setSttError('Voice input requires HTTPS (or localhost).')
+        return
+      }
+    } catch {
+      // ignore
+    }
+
+    try {
+      if (sttRef.current) stopStt()
+      setSttError('')
+
+      const rec = new SR()
+      rec.continuous = true
+      rec.interimResults = false
+      rec.lang = 'en-US'
+
+      rec.onresult = (event) => {
+        let finalText = ''
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const res = event.results[i]
+          const txt = res?.[0]?.transcript || ''
+          if (res.isFinal) finalText += txt
+        }
+
+        const append = (text) => {
+          const t = (text || '').trim()
+          if (!t) return
+          if (target === 'new_ticket_description') {
+            setNewTicketDescription((prev) => (prev ? `${prev} ${t}` : t))
+          } else if (target === 'reply') {
+            setNewMessage((prev) => (prev ? `${prev} ${t}` : t))
+          }
+        }
+
+        if (finalText.trim()) append(finalText)
+      }
+
+      rec.onerror = (e) => {
+        const code = e?.error || ''
+        if (code === 'not-allowed' || code === 'service-not-allowed') {
+          setSttError('Microphone permission denied.')
+        } else if (code === 'no-speech') {
+          setSttError('No speech detected.')
+        } else {
+          const msg = e?.message ? `: ${e.message}` : ''
+          setSttError(`Voice input failed${code ? ` (${code})` : ''}${msg}`)
+        }
+        stopStt({ clearError: false })
+      }
+
+      rec.onend = () => {
+        if (sttShouldRunRef.current) {
+          try {
+            rec.start()
+            return
+          } catch {
+            // ignore
+          }
+        }
+        setSttListening(false)
+        sttRef.current = null
+        setSttTarget(null)
+      }
+
+      sttRef.current = rec
+      setSttTarget(target)
+      setSttListening(true)
+      sttShouldRunRef.current = true
+      rec.start()
+    } catch {
+      stopStt()
+    }
+  }
 
   useEffect(() => {
     const baseUrl = getApiBaseUrl()
@@ -1403,12 +1536,45 @@ export default function App() {
                           />
                         </Field>
                         <Field label="Description">
-                          <Textarea
-                            value={newTicketDescription}
-                            onChange={(e) => setNewTicketDescription(e.target.value)}
-                            placeholder="Description"
-                            rows={3}
-                          />
+                          <div style={{ display: 'grid', gap: 8 }}>
+                            <Textarea
+                              value={newTicketDescription}
+                              onChange={(e) => setNewTicketDescription(e.target.value)}
+                              placeholder="Description"
+                              rows={3}
+                            />
+                            {sttSupported ? (
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (sttListening && sttTarget === 'new_ticket_description') stopStt()
+                                    else startStt('new_ticket_description')
+                                  }}
+                                  title={sttListening && sttTarget === 'new_ticket_description' ? 'Stop voice' : 'Voice to text'}
+                                  style={{
+                                    width: 36,
+                                    height: 36,
+                                    borderRadius: 10,
+                                    border: `1px solid ${UI.colors.border}`,
+                                    background: sttListening && sttTarget === 'new_ticket_description' ? UI.colors.primary : UI.colors.surface,
+                                    boxShadow: `0 1px 2px ${UI.colors.shadow}`,
+                                    display: 'grid',
+                                    placeItems: 'center',
+                                    cursor: 'pointer',
+                                  }}
+                                >
+                                  <MicIcon active={sttListening && sttTarget === 'new_ticket_description'} />
+                                </button>
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <div style={{ fontSize: 12, color: UI.colors.sidebarMuted }}>
+                                    {sttListening && sttTarget === 'new_ticket_description' ? 'Listening…' : 'Voice input'}
+                                  </div>
+                                  {sttError ? <div style={{ fontSize: 12, color: UI.colors.danger, marginTop: 2 }}>{sttError}</div> : null}
+                                </div>
+                              </div>
+                            ) : null}
+                          </div>
                         </Field>
                         <Field label="Priority">
                           <Select value={newTicketPriority} onChange={(e) => setNewTicketPriority(e.target.value)}>
@@ -1937,7 +2103,40 @@ export default function App() {
                   />
 
                   <form onSubmit={sendMessage} style={{ display: 'grid', gap: 8 }}>
-                    <Textarea value={newMessage} onChange={(e) => setNewMessage(e.target.value)} placeholder="Reply…" rows={3} required />
+                    <div style={{ display: 'grid', gap: 8 }}>
+                      <Textarea value={newMessage} onChange={(e) => setNewMessage(e.target.value)} placeholder="Reply…" rows={3} required />
+                      {role === 'customer' && sttSupported ? (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (sttListening && sttTarget === 'reply') stopStt()
+                              else startStt('reply')
+                            }}
+                            title={sttListening && sttTarget === 'reply' ? 'Stop voice' : 'Voice to text'}
+                            style={{
+                              width: 36,
+                              height: 36,
+                              borderRadius: 10,
+                              border: `1px solid ${UI.colors.border}`,
+                              background: sttListening && sttTarget === 'reply' ? UI.colors.primary : UI.colors.surface,
+                              boxShadow: `0 1px 2px ${UI.colors.shadow}`,
+                              display: 'grid',
+                              placeItems: 'center',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            <MicIcon active={sttListening && sttTarget === 'reply'} />
+                          </button>
+                          <div style={{ fontSize: 12, color: UI.colors.muted }}>
+                            {sttListening && sttTarget === 'reply' ? 'Listening…' : 'Voice input'}
+                          </div>
+                        </div>
+                      ) : null}
+                      {role === 'customer' && sttSupported && sttError ? (
+                        <div style={{ fontSize: 12, color: UI.colors.danger }}>{sttError}</div>
+                      ) : null}
+                    </div>
                     <input
                       type="file"
                       multiple
