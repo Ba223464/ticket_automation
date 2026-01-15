@@ -403,9 +403,12 @@ function Input(props) {
   return (
     <input
       {...props}
+      className={(props.className ? `${props.className} ` : '') + 'ta-field'}
       style={{
         width: '100%',
-        padding: '10px 12px',
+        height: 38,
+        padding: '9px 12px',
+        boxSizing: 'border-box',
         borderRadius: 12,
         border: `1px solid ${UI.colors.border}`,
         background: UI.colors.surface,
@@ -414,6 +417,15 @@ function Input(props) {
         fontSize: 14,
         lineHeight: '20px',
         boxShadow: `0 1px 2px ${UI.colors.shadow}`,
+        transition: 'border 150ms ease, box-shadow 150ms ease, background 150ms ease',
+        ...(props.disabled
+          ? {
+              background: UI.colors.surface2,
+              color: UI.colors.muted,
+              cursor: 'not-allowed',
+              opacity: 0.9,
+            }
+          : null),
         ...(props.style || {}),
       }}
       onFocus={(e) => {
@@ -442,9 +454,11 @@ function Textarea(props) {
   return (
     <textarea
       {...props}
+      className={(props.className ? `${props.className} ` : '') + 'ta-field'}
       style={{
         width: '100%',
         padding: '10px 12px',
+        boxSizing: 'border-box',
         borderRadius: 12,
         border: `1px solid ${UI.colors.border}`,
         background: UI.colors.surface,
@@ -454,6 +468,15 @@ function Textarea(props) {
         fontSize: 14,
         lineHeight: '20px',
         boxShadow: `0 1px 2px ${UI.colors.shadow}`,
+        transition: 'border 150ms ease, box-shadow 150ms ease, background 150ms ease',
+        ...(props.disabled
+          ? {
+              background: UI.colors.surface2,
+              color: UI.colors.muted,
+              cursor: 'not-allowed',
+              opacity: 0.9,
+            }
+          : null),
         ...(props.style || {}),
       }}
       onFocus={(e) => {
@@ -482,15 +505,27 @@ function Select(props) {
   return (
     <select
       {...props}
+      className={(props.className ? `${props.className} ` : '') + 'ta-field'}
       style={{
         width: '100%',
-        padding: '10px 12px',
+        height: 38,
+        padding: '9px 12px',
+        boxSizing: 'border-box',
         borderRadius: 12,
         border: `1px solid ${UI.colors.border}`,
         background: UI.colors.surface,
         color: UI.colors.text,
         outline: 'none',
         boxShadow: `0 1px 2px ${UI.colors.shadow}`,
+        transition: 'border 150ms ease, box-shadow 150ms ease, background 150ms ease',
+        ...(props.disabled
+          ? {
+              background: UI.colors.surface2,
+              color: UI.colors.muted,
+              cursor: 'not-allowed',
+              opacity: 0.9,
+            }
+          : null),
         ...(props.style || {}),
       }}
     />
@@ -530,7 +565,7 @@ function StatusPill({ status }) {
   )
 }
 
-function Card({ children }) {
+function Card({ children, style }) {
   return (
     <div
       style={{
@@ -539,6 +574,7 @@ function Card({ children }) {
         borderRadius: UI.radius,
         padding: 16,
         boxShadow: `0 10px 24px ${UI.colors.shadow}`,
+        ...(style || {}),
       }}
     >
       {children}
@@ -1111,6 +1147,34 @@ export default function App() {
         color: UI.colors.text,
       }}
     >
+      <style>{`
+        .ta-field::placeholder {
+          color: rgba(15, 23, 42, 0.45);
+        }
+        .ta-field:hover:not(:disabled) {
+          border-color: rgba(15, 23, 42, 0.18) !important;
+          box-shadow: 0 1px 2px rgba(15, 23, 42, 0.10) !important;
+        }
+        select.ta-field {
+          appearance: none;
+          -webkit-appearance: none;
+          -moz-appearance: none;
+          padding-right: 34px !important;
+          background-image:
+            linear-gradient(45deg, transparent 50%, rgba(15,23,42,0.55) 50%),
+            linear-gradient(135deg, rgba(15,23,42,0.55) 50%, transparent 50%),
+            linear-gradient(to right, transparent, transparent);
+          background-position:
+            calc(100% - 18px) 50%,
+            calc(100% - 13px) 50%,
+            calc(100% - 2.2em) 50%;
+          background-size: 5px 5px, 5px 5px, 1px 1.6em;
+          background-repeat: no-repeat;
+        }
+        select.ta-field:disabled {
+          background-image: none;
+        }
+      `}</style>
       <div
         style={{
           height: 44,
@@ -1374,11 +1438,11 @@ export default function App() {
                       <div style={{ color: UI.colors.sidebarMuted, fontSize: 12 }}>
                         Active: {availability?.active_assigned_count ?? '—'} / {availability?.capacity ?? '—'}
                       </div>
-                      <ActionRow>
+                      <ActionRow style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 8 }}>
                         <Button
                           variant="primary"
                           onClick={() => toggleAvailability(true)}
-                          style={{ padding: '8px 10px' }}
+                          style={{ padding: '8px 10px', width: '100%' }}
                           disabled={
                             Boolean(availability?.is_available) ||
                             (typeof availability?.active_assigned_count === 'number' &&
@@ -1392,7 +1456,7 @@ export default function App() {
                         <Button
                           variant="ghost"
                           onClick={() => toggleAvailability(false)}
-                          style={{ padding: '8px 10px', border: `1px solid ${UI.colors.sidebarBorder}`, background: 'rgba(255,255,255,0.06)', color: UI.colors.sidebarText }}
+                          style={{ padding: '8px 10px', width: '100%', border: `1px solid ${UI.colors.sidebarBorder}`, background: 'rgba(255,255,255,0.06)', color: UI.colors.sidebarText }}
                           disabled={!Boolean(availability?.is_available)}
                         >
                           Go offline
@@ -1566,7 +1630,10 @@ export default function App() {
 
             <Card>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div style={{ fontSize: 14, fontWeight: 900 }}>Tickets</div>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 900 }}>Tickets</div>
+                  <div style={{ fontSize: 12, color: UI.colors.muted, marginTop: 2 }}>Filter, search and pick a ticket</div>
+                </div>
                 <Button variant="ghost" onClick={loadTickets} style={{ padding: '6px 10px' }}>
                   Refresh
                 </Button>
@@ -1574,7 +1641,9 @@ export default function App() {
               {ticketsError ? <div style={{ color: UI.colors.danger, marginTop: 8 }}>{ticketsError}</div> : null}
 
               <div style={{ marginTop: 12, display: 'grid', gap: 10 }}>
-                <ActionRow>
+                <div style={{ padding: 12, borderRadius: 14, border: `1px solid ${UI.colors.border}`, background: UI.colors.surface2 }}>
+                  <div style={{ fontSize: 12, fontWeight: 900, marginBottom: 8, color: UI.colors.text }}>Filters</div>
+                  <ActionRow style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', alignItems: 'stretch' }}>
                   <div style={{ flex: '1 1 160px', minWidth: 0 }}>
                     <Select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
                       <option value="">All status</option>
@@ -1597,14 +1666,14 @@ export default function App() {
                   </div>
                   {(role === 'admin' || role === 'agent') && (
                     <div style={{ flex: '1 1 160px', minWidth: 0 }}>
-                      <Input value={filterAssignedAgent} onChange={(e) => setFilterAssignedAgent(e.target.value)} placeholder="assignee id" />
+                      <Input value={filterAssignedAgent} onChange={(e) => setFilterAssignedAgent(e.target.value)} placeholder="Assignee (id / username / email)" />
                     </div>
                   )}
                   <div style={{ flex: '1 1 160px', minWidth: 0 }}>
-                    <Input value={filterCreatedFrom} onChange={(e) => setFilterCreatedFrom(e.target.value)} placeholder="from YYYY-MM-DD" />
+                    <Input type="date" value={filterCreatedFrom} onChange={(e) => setFilterCreatedFrom(e.target.value)} placeholder="From" />
                   </div>
                   <div style={{ flex: '1 1 160px', minWidth: 0 }}>
-                    <Input value={filterCreatedTo} onChange={(e) => setFilterCreatedTo(e.target.value)} placeholder="to YYYY-MM-DD" />
+                    <Input type="date" value={filterCreatedTo} onChange={(e) => setFilterCreatedTo(e.target.value)} placeholder="To" />
                   </div>
                   <Button
                     type="button"
@@ -1617,33 +1686,37 @@ export default function App() {
                       setFilterCreatedTo('')
                       await loadTickets()
                     }}
-                    style={{ whiteSpace: 'nowrap' }}
+                    style={{ whiteSpace: 'nowrap', justifySelf: 'start' }}
                   >
                     Clear filters
                   </Button>
-                </ActionRow>
+                  </ActionRow>
+                </div>
               </div>
 
               <form onSubmit={searchTickets} style={{ marginTop: 12 }}>
-                <ActionRow>
-                <div style={{ flex: '1 1 220px', minWidth: 0 }}>
-                  <Input value={ticketSearch} onChange={(e) => setTicketSearch(e.target.value)} placeholder="Search…" />
+                <div style={{ padding: 12, borderRadius: 14, border: `1px solid ${UI.colors.border}`, background: UI.colors.surface2 }}>
+                  <div style={{ fontSize: 12, fontWeight: 900, marginBottom: 8, color: UI.colors.text }}>Search</div>
+                  <ActionRow style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', alignItems: 'stretch' }}>
+                    <div style={{ minWidth: 0 }}>
+                      <Input value={ticketSearch} onChange={(e) => setTicketSearch(e.target.value)} placeholder="Search subject / description…" />
+                    </div>
+                    <Button type="submit" style={{ whiteSpace: 'nowrap' }} disabled={ticketSearchLoading}>
+                      {ticketSearchLoading ? 'Searching…' : 'Search'}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      onClick={async () => {
+                        setTicketSearch('')
+                        await loadTickets()
+                      }}
+                      style={{ whiteSpace: 'nowrap' }}
+                    >
+                      Clear
+                    </Button>
+                  </ActionRow>
                 </div>
-                <Button type="submit" style={{ whiteSpace: 'nowrap' }} disabled={ticketSearchLoading}>
-                  {ticketSearchLoading ? 'Searching…' : 'Search'}
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  onClick={async () => {
-                    setTicketSearch('')
-                    await loadTickets()
-                  }}
-                  style={{ whiteSpace: 'nowrap' }}
-                >
-                  Clear
-                </Button>
-                </ActionRow>
               </form>
 
               <div
@@ -1652,7 +1725,8 @@ export default function App() {
                   height: 'calc(100vh - 240px)',
                   overflow: 'auto',
                   border: `1px solid ${UI.colors.border}`,
-                  borderRadius: 12,
+                  borderRadius: 14,
+                  background: UI.colors.surface,
                 }}
               >
                 <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0 }}>
@@ -1666,7 +1740,7 @@ export default function App() {
                     </tr>
                   </thead>
                   <tbody>
-                    {tickets.map((t) => {
+                    {tickets.map((t, idx) => {
                       const active = selectedTicketId === t.id
                       return (
                         <tr
@@ -1674,7 +1748,9 @@ export default function App() {
                           onClick={() => setSelectedTicketId(t.id)}
                           style={{
                             cursor: 'pointer',
-                            background: active ? 'rgba(37,99,235,0.08)' : UI.colors.surface,
+                            background: active ? 'rgba(37,99,235,0.09)' : idx % 2 === 1 ? 'rgba(15,23,42,0.02)' : UI.colors.surface,
+                            transition: 'background 140ms ease, box-shadow 140ms ease',
+                            boxShadow: active ? 'inset 3px 0 0 rgba(37,99,235,0.9)' : 'none',
                           }}
                           onMouseEnter={(e) => {
                             try {
@@ -1691,15 +1767,15 @@ export default function App() {
                             }
                           }}
                         >
-                          <td style={{ padding: '10px 12px', borderBottom: `1px solid ${UI.colors.border}`, fontWeight: 800, fontSize: 13 }}>#{t.id}</td>
-                          <td style={{ padding: '10px 12px', borderBottom: `1px solid ${UI.colors.border}`, fontSize: 13 }}>
+                          <td style={{ padding: '8px 12px', borderBottom: `1px solid ${UI.colors.border}`, fontWeight: 900, fontSize: 12 }}>#{t.id}</td>
+                          <td style={{ padding: '8px 12px', borderBottom: `1px solid ${UI.colors.border}`, fontSize: 13 }}>
                             <div style={{ fontWeight: 800 }}>{t.subject}</div>
                           </td>
-                          <td style={{ padding: '10px 12px', borderBottom: `1px solid ${UI.colors.border}` }}>
+                          <td style={{ padding: '8px 12px', borderBottom: `1px solid ${UI.colors.border}` }}>
                             <StatusPill status={t.status} />
                           </td>
-                          <td style={{ padding: '10px 12px', borderBottom: `1px solid ${UI.colors.border}`, fontSize: 13, color: UI.colors.muted }}>{t.priority}</td>
-                          <td style={{ padding: '10px 12px', borderBottom: `1px solid ${UI.colors.border}`, fontSize: 13, color: UI.colors.muted }}>
+                          <td style={{ padding: '8px 12px', borderBottom: `1px solid ${UI.colors.border}`, fontSize: 12, color: UI.colors.muted }}>{t.priority}</td>
+                          <td style={{ padding: '8px 12px', borderBottom: `1px solid ${UI.colors.border}`, fontSize: 12, color: UI.colors.muted }}>
                             {t.assigned_agent ?? '—'}
                           </td>
                         </tr>
@@ -1722,30 +1798,17 @@ export default function App() {
                     <StatusPill status={selectedTicket.status} />
                   </div>
                   <div style={{ color: UI.colors.muted, fontSize: 13 }}>{selectedTicket.description}</div>
-                  <div style={{ color: UI.colors.muted, fontSize: 12 }}>
-                    assigned_agent: {selectedTicket.assigned_agent ?? '—'}
-                  </div>
+                  <div style={{ color: UI.colors.muted, fontSize: 12 }}>assigned_agent: {selectedTicket.assigned_agent ?? '—'}</div>
 
                   {(role === 'agent' || role === 'admin') && (
                     <div style={{ display: 'grid', gap: 10, padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}`, background: UI.colors.surface2 }}>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
                         <div style={{ fontSize: 13, fontWeight: 900 }}>AI Draft</div>
-                        <Button
-                          type="button"
-                          variant="primary"
-                          onClick={generateAIDraft}
-                          style={{ padding: '8px 10px' }}
-                          disabled={aiDraftLoading}
-                        >
+                        <Button type="button" variant="primary" onClick={generateAIDraft} style={{ padding: '8px 10px' }} disabled={aiDraftLoading}>
                           {aiDraftLoading ? 'Generating…' : 'Generate'}
                         </Button>
                       </div>
-                      <Textarea
-                        value={aiDraft}
-                        onChange={(e) => setAiDraft(e.target.value)}
-                        placeholder="AI suggested reply will appear here…"
-                        rows={3}
-                      />
+                      <Textarea value={aiDraft} onChange={(e) => setAiDraft(e.target.value)} placeholder="AI suggested reply will appear here…" rows={3} />
                       <ActionRow>
                         <Button type="button" variant="ghost" onClick={() => setAiDraft('')} style={{ whiteSpace: 'nowrap' }}>
                           Clear
@@ -1765,15 +1828,7 @@ export default function App() {
 
                   <div style={{ height: 'calc(100vh - 420px)', overflow: 'auto', display: 'grid', gap: 10, paddingRight: 4 }}>
                     {messages.map((m) => (
-                      <div
-                        key={m.id}
-                        style={{
-                          display: 'grid',
-                          gridTemplateColumns: '18px 1fr',
-                          gap: 10,
-                          alignItems: 'start',
-                        }}
-                      >
+                      <div key={m.id} style={{ display: 'grid', gridTemplateColumns: '18px 1fr', gap: 10, alignItems: 'start' }}>
                         <div
                           style={{
                             width: 10,
@@ -1784,14 +1839,7 @@ export default function App() {
                             boxShadow: `0 0 0 4px ${m.is_internal ? 'rgba(217,119,6,0.14)' : 'rgba(37,99,235,0.12)'}`,
                           }}
                         />
-                        <div
-                          style={{
-                            padding: 12,
-                            borderRadius: 12,
-                            background: UI.colors.surface,
-                            border: `1px solid ${UI.colors.border}`,
-                          }}
-                        >
+                        <div style={{ padding: 12, borderRadius: 12, background: UI.colors.surface, border: `1px solid ${UI.colors.border}` }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'baseline' }}>
                             <div style={{ fontSize: 13, fontWeight: 900 }}>
                               {m.author ?? '—'}
@@ -1803,12 +1851,7 @@ export default function App() {
                             <div style={{ marginTop: 10, display: 'grid', gap: 6 }}>
                               {m.attachments.map((a) => (
                                 <div key={a.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center' }}>
-                                  <a
-                                    href={toAbsoluteUrl(a.url)}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    style={{ fontSize: 12, color: UI.colors.primary, textDecoration: 'none', fontWeight: 650 }}
-                                  >
+                                  <a href={toAbsoluteUrl(a.url)} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: UI.colors.primary, textDecoration: 'none', fontWeight: 650 }}>
                                     {a.filename || 'attachment'}
                                   </a>
                                   {a.url ? (
@@ -1843,13 +1886,7 @@ export default function App() {
                   />
 
                   <form onSubmit={sendMessage} style={{ display: 'grid', gap: 8 }}>
-                    <Textarea
-                      value={newMessage}
-                      onChange={(e) => setNewMessage(e.target.value)}
-                      placeholder="Reply…"
-                      rows={3}
-                      required
-                    />
+                    <Textarea value={newMessage} onChange={(e) => setNewMessage(e.target.value)} placeholder="Reply…" rows={3} required />
                     <input
                       type="file"
                       multiple
@@ -1860,11 +1897,7 @@ export default function App() {
                     />
                     {(role === 'agent' || role === 'admin') && (
                       <label style={{ display: 'flex', gap: 8, alignItems: 'center', color: UI.colors.text, fontSize: 13 }}>
-                        <input
-                          type="checkbox"
-                          checked={newMessageInternal}
-                          onChange={(e) => setNewMessageInternal(e.target.checked)}
-                        />
+                        <input type="checkbox" checked={newMessageInternal} onChange={(e) => setNewMessageInternal(e.target.checked)} />
                         Internal note
                       </label>
                     )}
