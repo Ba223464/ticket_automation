@@ -280,6 +280,61 @@ This section describes how the system was implemented and how each feature fits 
 - `POST /api/tickets/<id>/ai-draft/`
 - `GET /api/tickets/search/?q=...`
 
+### Common payloads (examples)
+
+Note: exact fields can vary by environment; this shows the typical shape used by the frontend.
+
+#### Create ticket
+
+- `POST /api/tickets/`
+
+Example body:
+
+```json
+{
+  "subject": "Printer not working",
+  "description": "It shows error code 123.",
+  "priority": "MEDIUM"
+}
+```
+
+#### Add message to ticket
+
+- `POST /api/tickets/<id>/messages/`
+
+Example body:
+
+```json
+{
+  "body": "Can you share a photo of the error?",
+  "is_internal": false
+}
+```
+
+#### Status change
+
+- `POST /api/tickets/<id>/set-status/`
+
+Example body:
+
+```json
+{
+  "status": "IN_PROGRESS"
+}
+```
+
+#### Manual assignment
+
+- `POST /api/tickets/<id>/assign/`
+
+Example body:
+
+```json
+{
+  "assigned_agent": 12
+}
+```
+
 ### Analytics (admin-only)
 
 - `GET /api/analytics/summary/`
@@ -289,6 +344,140 @@ This section describes how the system was implemented and how each feature fits 
 ---
 
 ## 4) Notes and operational tips
+
+---
+
+## 4) Runbook / deployment guide
+
+This section is a practical runbook for running the project locally (dev) and the key environment variables.
+
+### Running with Docker Compose (recommended)
+
+From the repo root:
+
+- Bring the stack up:
+  - `docker compose up --build`
+
+- Services typically include:
+  - `postgres` (DB)
+  - `redis` (broker/channel layer)
+  - `backend` (Django ASGI via Daphne)
+  - `celery` (Celery worker)
+  - `frontend` (Vite dev server)
+
+### Database migrations (Docker)
+
+When schema changes:
+
+- `docker compose exec backend python manage.py migrate`
+
+### Creating an admin user (Docker)
+
+- `docker compose exec backend python manage.py createsuperuser`
+
+### Running without Docker (advanced)
+
+If you want to run services locally:
+
+- Backend (typical):
+  - `pip install -r backend/requirements.txt`
+  - `python backend/manage.py migrate`
+  - Run an ASGI server (project uses Daphne in Docker).
+
+- Frontend:
+  - `npm install`
+  - `npm run dev`
+
+### Environment variables
+
+Backend:
+
+- `backend/.env` (and `backend/.env.example`)
+- Key categories:
+  - **Django settings** (secret key, debug, allowed hosts)
+  - **Database** (Postgres connection)
+  - **Redis** (Celery broker/channel layer)
+  - **Email** (SMTP)
+  - **AI** (`GEMINI_API_KEY`)
+
+Frontend:
+
+- `frontend/.env` (and `frontend/.env.example`)
+- Key variables:
+  - `VITE_API_BASE_URL`
+  - `VITE_WS_BASE_URL`
+
+### Operational notes
+
+- Backend is served via **Daphne (ASGI)** in Docker; changes often require a container restart if hot reload isn’t enabled.
+- Email sending is performed by **Celery**; if emails aren’t arriving, verify:
+  - `celery` container is running
+  - SMTP env vars are correct
+  - Gmail App Password is used (if Gmail)
+
+---
+
+## 5) Data model & workflows
+
+### Core entities
+
+- **User** (Django auth user)
+  - Extended by **UserProfile**
+  - Roles: `customer`, `agent`, `admin`
+  - Agent operational fields: `is_available`, `capacity`
+
+- **Ticket**
+  - Owned by a `customer`
+  - Optionally assigned to an `assigned_agent`
+  - Has `status`, `priority`, timestamps
+
+- **TicketMessage**
+  - Belongs to a `ticket`
+  - Authored by a user
+  - `is_internal` distinguishes:
+    - `false`: customer-visible replies
+    - `true`: internal agent/admin notes (not emailed to customer)
+
+- **Attachment**
+  - File attachment(s) associated with a ticket message
+
+### Ticket lifecycle (typical)
+
+1. **Customer creates ticket**
+2. Ticket is **auto-assigned** (if available agents exist) or stays unassigned
+3. **Agent replies** (public) or adds **internal note**
+4. Agent updates status:
+   - `OPEN` → `ASSIGNED` → `IN_PROGRESS` → `WAITING_ON_CUSTOMER` → `RESOLVED` (and possibly `CLOSED` depending on workflow)
+5. Emails and WebSocket events notify participants
+
+### Auto-assignment workflow
+
+- Implemented as a Celery task (`assign_ticket(ticket_id)`)
+- Uses agent availability + capacity + current active load (open/in progress/waiting)
+- Triggered on:
+  - ticket creation
+  - agent toggling to online (to pick up older unassigned tickets)
+
+### Email notification workflow
+
+- Implemented in `send_ticket_email(...)`
+- Triggered on:
+  - message created
+  - status changed
+  - assignment
+- Recipient logic:
+  - Internal message: agent only
+  - Public message: customer + agent
+
+### Real-time workflow (WebSockets)
+
+- Ticket detail screen subscribes to ticket events
+- Typical pushed events:
+  - message created
+  - status changed
+  - assignment updated
+
+---
 
 - For Gmail SMTP:
   - use a Gmail **App Password** (requires 2FA)

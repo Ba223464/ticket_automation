@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 
 const TOKEN_KEY = 'ta_access'
 const REFRESH_KEY = 'ta_refresh'
+const THEME_KEY = 'ta_theme'
 
 function getApiBaseUrl() {
   return import.meta.env.VITE_API_BASE_URL
@@ -135,27 +136,98 @@ async function apiFetch(path, { method = 'GET', token, body, onAuthRefresh } = {
   return first.data
 }
 
-const UI = {
-  colors: {
-    bg: '#f6f8fb',
+const BASE_THEMES = {
+  light: {
+    bg: '#F6FFF5',
     surface: '#ffffff',
-    surface2: '#f9fafb',
-    border: 'rgba(15,23,42,0.12)',
-    text: '#0f172a',
-    muted: 'rgba(15,23,42,0.62)',
-    primary: '#2563eb',
-    primaryBg: 'rgba(37,99,235,0.10)',
+    surface2: '#FBFFF9',
+    border: 'rgba(41,51,37,0.18)',
+    text: '#293325',
+    muted: 'rgba(41,51,37,0.68)',
     danger: '#dc2626',
-    success: '#16a34a',
     warning: '#d97706',
-    shadow: 'rgba(15,23,42,0.10)',
-    shadowStrong: 'rgba(15,23,42,0.18)',
-    sidebarBg: '#0b1220',
-    sidebarSurface: 'rgba(255,255,255,0.06)',
-    sidebarBorder: 'rgba(255,255,255,0.10)',
-    sidebarText: '#e5e7eb',
-    sidebarMuted: 'rgba(229,231,235,0.72)',
+    shadow: 'rgba(41,51,37,0.10)',
+    shadowStrong: 'rgba(41,51,37,0.18)',
   },
+  dark: {
+    bg: '#141A14',
+    surface: '#1B231B',
+    surface2: '#202B20',
+    border: 'rgba(246,255,245,0.14)',
+    text: '#F6FFF5',
+    muted: 'rgba(246,255,245,0.72)',
+    danger: '#f87171',
+    warning: '#f59e0b',
+    shadow: 'rgba(0,0,0,0.25)',
+    shadowStrong: 'rgba(0,0,0,0.45)',
+  },
+}
+
+const ROLE_ACCENTS = {
+  customer: {
+    primary: '#4CBB17',
+    primaryBg: 'rgba(76,187,23,0.16)',
+    focusBorder: 'rgba(76,187,23,0.55)',
+    focusRing: 'rgba(76,187,23,0.16)',
+    success: '#48872B',
+    sidebarBgLight: '#293325',
+    sidebarBgDark: '#0F140F',
+    sidebarSurface: 'rgba(76,187,23,0.10)',
+    sidebarBorder: 'rgba(76,187,23,0.18)',
+    sidebarText: '#F6FFF5',
+    sidebarMutedLight: 'rgba(246,255,245,0.72)',
+    sidebarMutedDark: 'rgba(246,255,245,0.72)',
+  },
+  agent: {
+    primary: '#2563eb',
+    primaryBg: 'rgba(37,99,235,0.16)',
+    focusBorder: 'rgba(37,99,235,0.55)',
+    focusRing: 'rgba(37,99,235,0.16)',
+    success: '#2563eb',
+    sidebarBgLight: '#0b1220',
+    sidebarBgDark: '#07101f',
+    sidebarSurface: 'rgba(37,99,235,0.10)',
+    sidebarBorder: 'rgba(37,99,235,0.18)',
+    sidebarText: '#eef2ff',
+    sidebarMutedLight: 'rgba(238,242,255,0.72)',
+    sidebarMutedDark: 'rgba(238,242,255,0.72)',
+  },
+  admin: {
+    primary: '#9a3412',
+    primaryBg: 'rgba(154,52,18,0.16)',
+    focusBorder: 'rgba(154,52,18,0.55)',
+    focusRing: 'rgba(154,52,18,0.16)',
+    success: '#9a3412',
+    sidebarBgLight: '#3b2217',
+    sidebarBgDark: '#22140e',
+    sidebarSurface: 'rgba(154,52,18,0.12)',
+    sidebarBorder: 'rgba(154,52,18,0.20)',
+    sidebarText: '#fff7ed',
+    sidebarMutedLight: 'rgba(255,247,237,0.72)',
+    sidebarMutedDark: 'rgba(255,247,237,0.72)',
+  },
+}
+
+function resolveColors(mode, role) {
+  const base = BASE_THEMES[mode] || BASE_THEMES.light
+  const accent = ROLE_ACCENTS[role] || ROLE_ACCENTS.customer
+  return {
+    ...base,
+    primary: accent.primary,
+    primaryBg: accent.primaryBg,
+    focusBorder: accent.focusBorder,
+    focusRing: accent.focusRing,
+    success: accent.success,
+    sidebarBg: mode === 'dark' ? accent.sidebarBgDark : accent.sidebarBgLight,
+    sidebarSurface: accent.sidebarSurface,
+    sidebarBorder: accent.sidebarBorder,
+    sidebarText: accent.sidebarText,
+    sidebarMuted: mode === 'dark' ? accent.sidebarMutedDark : accent.sidebarMutedLight,
+  }
+}
+
+const UI = {
+  colors: resolveColors('light', 'customer'),
   radius: 14,
 }
 
@@ -456,8 +528,8 @@ function Input(props) {
       }}
       onFocus={(e) => {
         try {
-          e.currentTarget.style.borderColor = 'rgba(37,99,235,0.55)'
-          e.currentTarget.style.boxShadow = `0 0 0 4px rgba(37,99,235,0.12)`
+          e.currentTarget.style.borderColor = UI.colors.focusBorder || UI.colors.primary
+          e.currentTarget.style.boxShadow = `0 0 0 4px ${UI.colors.focusRing || UI.colors.primaryBg}`
         } catch {
           // ignore
         }
@@ -507,8 +579,8 @@ function Textarea(props) {
       }}
       onFocus={(e) => {
         try {
-          e.currentTarget.style.borderColor = 'rgba(37,99,235,0.55)'
-          e.currentTarget.style.boxShadow = `0 0 0 4px rgba(37,99,235,0.12)`
+          e.currentTarget.style.borderColor = UI.colors.focusBorder || UI.colors.primary
+          e.currentTarget.style.boxShadow = `0 0 0 4px ${UI.colors.focusRing || UI.colors.primaryBg}`
         } catch {
           // ignore
         }
@@ -561,7 +633,7 @@ function Select(props) {
 function StatusPill({ status }) {
   const bg =
     status === 'OPEN'
-      ? 'rgba(37,99,235,0.10)'
+      ? UI.colors.primaryBg
       : status === 'ASSIGNED'
         ? 'rgba(2,132,199,0.10)'
         : status === 'IN_PROGRESS'
@@ -569,7 +641,7 @@ function StatusPill({ status }) {
           : status === 'WAITING_ON_CUSTOMER'
             ? 'rgba(124,58,237,0.10)'
             : status === 'RESOLVED'
-              ? 'rgba(22,163,74,0.10)'
+              ? UI.colors.primaryBg
               : 'rgba(15,23,42,0.06)'
 
   const fg = UI.colors.text
@@ -618,7 +690,7 @@ function SidebarItem({ active, children, onClick }) {
         padding: '10px 12px',
         borderRadius: 10,
         border: `1px solid ${UI.colors.sidebarBorder}`,
-        background: active ? 'rgba(96,165,250,0.18)' : UI.colors.sidebarSurface,
+        background: active ? UI.colors.primaryBg : UI.colors.sidebarSurface,
         color: UI.colors.sidebarText,
         cursor: 'pointer',
         fontWeight: active ? 800 : 650,
@@ -649,6 +721,10 @@ export default function App() {
   const [health, setHealth] = useState('loading...')
   const [token, setToken] = useState(() => localStorage.getItem(TOKEN_KEY) || '')
   const [refreshToken, setRefreshToken] = useState(() => localStorage.getItem(REFRESH_KEY) || '')
+  const [theme, setTheme] = useState(() => {
+    const v = (localStorage.getItem(THEME_KEY) || '').toLowerCase()
+    return v === 'dark' ? 'dark' : 'light'
+  })
   const [user, setUser] = useState(null)
   const [loginUsername, setLoginUsername] = useState('')
   const [loginPassword, setLoginPassword] = useState('')
@@ -690,6 +766,8 @@ export default function App() {
   const [aiDraftError, setAiDraftError] = useState('')
 
   const [availability, setAvailability] = useState(null)
+  const [adminAgentsPresence, setAdminAgentsPresence] = useState(null)
+  const [adminAgentsPresenceError, setAdminAgentsPresenceError] = useState('')
   const wsRef = useRef(null)
 
   const didSetInitialPanelRef = useRef(false)
@@ -717,11 +795,14 @@ export default function App() {
   const [sttError, setSttError] = useState('')
   const sttRef = useRef(null)
   const sttShouldRunRef = useRef(false)
+  const newMessageFilesInputRef = useRef(null)
 
   const [activePanel, setActivePanel] = useState('tickets')
   const [authTab, setAuthTab] = useState('login')
 
   const role = useMemo(() => user?.profile?.role || null, [user])
+
+  UI.colors = resolveColors(theme === 'dark' ? 'dark' : 'light', role || 'customer')
 
   const sttSupported = useMemo(() => !!getSpeechRecognition(), [])
 
@@ -735,6 +816,18 @@ export default function App() {
       }
     }
   }, [])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(THEME_KEY, theme)
+    } catch {
+      // ignore
+    }
+  }, [theme])
+
+  function toggleTheme() {
+    setTheme((t) => (t === 'dark' ? 'light' : 'dark'))
+  }
 
   function stopStt({ clearError = true } = {}) {
     try {
@@ -1309,6 +1402,28 @@ export default function App() {
   useEffect(() => {
     if (!token) return
     if (role !== 'admin') return
+    if (activePanel !== 'presence') return
+
+    let cancelled = false
+    setAdminAgentsPresenceError('')
+    apiFetch('/api/admin/agents/presence/', { token })
+      .then((r) => {
+        if (cancelled) return
+        setAdminAgentsPresence(r)
+      })
+      .catch((e) => {
+        if (cancelled) return
+        setAdminAgentsPresenceError(e?.message || 'Unable to load agents')
+        setAdminAgentsPresence(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [token, role, activePanel])
+
+  useEffect(() => {
+    if (!token) return
+    if (role !== 'admin') return
 
     let cancelled = false
     setAnalyticsError('')
@@ -1337,17 +1452,28 @@ export default function App() {
       style={{
         minHeight: '100vh',
         background: UI.colors.bg,
-        fontFamily: 'ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial',
+        fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial',
         color: UI.colors.text,
       }}
     >
       <style>{`
+        html, body {
+          margin: 0;
+          padding: 0;
+          background: ${UI.colors.bg};
+          font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+        }
+        #root {
+          min-height: 100vh;
+          background: ${UI.colors.bg};
+          font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+        }
         .ta-field::placeholder {
-          color: rgba(15, 23, 42, 0.45);
+          color: ${UI.colors.muted};
         }
         .ta-field:hover:not(:disabled) {
-          border-color: rgba(15, 23, 42, 0.18) !important;
-          box-shadow: 0 1px 2px rgba(15, 23, 42, 0.10) !important;
+          border-color: ${UI.colors.border} !important;
+          box-shadow: 0 1px 2px ${UI.colors.shadow} !important;
         }
         select.ta-field {
           appearance: none;
@@ -1355,8 +1481,8 @@ export default function App() {
           -moz-appearance: none;
           padding-right: 34px !important;
           background-image:
-            linear-gradient(45deg, transparent 50%, rgba(15,23,42,0.55) 50%),
-            linear-gradient(135deg, rgba(15,23,42,0.55) 50%, transparent 50%),
+            linear-gradient(45deg, transparent 50%, ${UI.colors.muted} 50%),
+            linear-gradient(135deg, ${UI.colors.muted} 50%, transparent 50%),
             linear-gradient(to right, transparent, transparent);
           background-position:
             calc(100% - 18px) 50%,
@@ -1388,6 +1514,9 @@ export default function App() {
           <div style={{ color: UI.colors.muted, fontSize: 11 }}>Health: {health}</div>
         </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+          <Button variant="ghost" onClick={toggleTheme} style={{ padding: '6px 10px' }}>
+            {theme === 'dark' ? 'Light' : 'Dark'}
+          </Button>
           {user ? (
             <>
               <div style={{ color: UI.colors.text, fontWeight: 650, fontSize: 12 }}>
@@ -1401,7 +1530,13 @@ export default function App() {
         </div>
       </div>
 
-      <div style={{ maxWidth: 1400, margin: '0 auto', padding: 16 }}>
+      <div
+        style={
+          !token || !user
+            ? { maxWidth: 1400, margin: '0 auto', padding: 16 }
+            : { width: '100%', margin: 0, padding: 16 }
+        }
+      >
         {!token || !user ? (
           <div
             style={{
@@ -1415,23 +1550,26 @@ export default function App() {
             <div
               style={{
                 borderRadius: UI.radius,
-                background: UI.colors.sidebarBg,
-                border: `1px solid ${UI.colors.sidebarBorder}`,
-                boxShadow: '0 16px 40px rgba(0,0,0,0.25)',
+                background:
+                  theme === 'dark'
+                    ? UI.colors.sidebarBg
+                    : `linear-gradient(135deg, ${UI.colors.primaryBg} 0%, rgba(255,255,255,0.92) 85%, rgba(255,255,255,0.98) 100%)`,
+                border: `1px solid ${theme === 'dark' ? UI.colors.sidebarBorder : UI.colors.border}`,
+                boxShadow: theme === 'dark' ? '0 16px 40px rgba(0,0,0,0.35)' : `0 16px 40px ${UI.colors.shadowStrong}`,
                 padding: 22,
-                color: UI.colors.sidebarText,
+                color: theme === 'dark' ? UI.colors.sidebarText : UI.colors.text,
                 display: 'grid',
                 alignContent: 'space-between',
               }}
             >
               <div>
                 <div style={{ fontSize: 20, fontWeight: 900, letterSpacing: 0.2 }}>Ticket Automation</div>
-                <div style={{ marginTop: 10, color: UI.colors.sidebarMuted, fontSize: 13, lineHeight: '20px' }}>
+                <div style={{ marginTop: 10, color: theme === 'dark' ? UI.colors.sidebarMuted : UI.colors.muted, fontSize: 13, lineHeight: '20px' }}>
                   AI-assisted customer support with real-time ticket updates, auto-assignment, search, analytics and email notifications.
                 </div>
               </div>
               <div style={{ display: 'grid', gap: 10 }}>
-                <div style={{ fontSize: 12, color: UI.colors.sidebarMuted }}>Backend health</div>
+                <div style={{ fontSize: 12, color: theme === 'dark' ? UI.colors.sidebarMuted : UI.colors.muted }}>Backend health</div>
                 <div style={{ fontSize: 14, fontWeight: 800 }}>{health}</div>
               </div>
             </div>
@@ -1522,9 +1660,10 @@ export default function App() {
           <div
             style={{
               display: 'grid',
-              gridTemplateColumns: '260px 420px 1fr',
+              gridTemplateColumns: '260px 380px minmax(0, 760px)',
               gap: 12,
-              alignItems: 'start',
+              alignItems: 'stretch',
+              justifyContent: 'start',
             }}
           >
             <div
@@ -1532,7 +1671,7 @@ export default function App() {
                 position: 'sticky',
                 top: 72,
                 alignSelf: 'start',
-                height: 'calc(100vh - 96px)',
+                height: 'calc(100vh - 116px)',
                 overflow: 'auto',
                 borderRadius: UI.radius,
                 background: UI.colors.sidebarBg,
@@ -1586,7 +1725,7 @@ export default function App() {
                             fontSize: 12,
                             fontWeight: 800,
                             color: availability?.is_available ? UI.colors.success : UI.colors.sidebarMuted,
-                            background: availability?.is_available ? 'rgba(22,163,74,0.14)' : 'rgba(255,255,255,0.08)',
+                            background: availability?.is_available ? UI.colors.primaryBg : 'rgba(255,255,255,0.08)',
                             border: `1px solid ${UI.colors.sidebarBorder}`,
                             borderRadius: 999,
                             padding: '4px 10px',
@@ -1631,6 +1770,65 @@ export default function App() {
                           You are at capacity. Resolve/close a ticket to go online again.
                         </div>
                       ) : null}
+
+                      {role === 'admin' ? (
+                        <div style={{ marginTop: 6, display: 'grid', gap: 8 }}>
+                          <div style={{ fontWeight: 900, color: UI.colors.sidebarText }}>Agents</div>
+                          {adminAgentsPresenceError ? (
+                            <div style={{ color: UI.colors.sidebarMuted, fontSize: 12 }}>{adminAgentsPresenceError}</div>
+                          ) : null}
+                          {!adminAgentsPresence && !adminAgentsPresenceError ? (
+                            <div style={{ color: UI.colors.sidebarMuted, fontSize: 12 }}>Loading agents…</div>
+                          ) : null}
+                          {Array.isArray(adminAgentsPresence?.agents) && adminAgentsPresence.agents.length === 0 ? (
+                            <div style={{ color: UI.colors.sidebarMuted, fontSize: 12 }}>No agents found.</div>
+                          ) : null}
+                          {Array.isArray(adminAgentsPresence?.agents)
+                            ? adminAgentsPresence.agents.map((a) => {
+                                const online = Boolean(a?.is_available)
+                                const active = typeof a?.active_assigned_count === 'number' ? a.active_assigned_count : null
+                                const cap = typeof a?.capacity === 'number' ? a.capacity : null
+                                return (
+                                  <div
+                                    key={a.id}
+                                    style={{
+                                      border: `1px solid ${UI.colors.sidebarBorder}`,
+                                      borderRadius: 12,
+                                      padding: 10,
+                                      background: 'rgba(255,255,255,0.06)',
+                                      display: 'grid',
+                                      gap: 6,
+                                    }}
+                                  >
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center' }}>
+                                      <div style={{ fontSize: 12, fontWeight: 900, color: UI.colors.sidebarText, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                        {a?.username || '—'}
+                                      </div>
+                                      <div
+                                        style={{
+                                          fontSize: 11,
+                                          fontWeight: 900,
+                                          color: online ? UI.colors.success : UI.colors.sidebarMuted,
+                                          background: online ? UI.colors.primaryBg : 'rgba(255,255,255,0.08)',
+                                          border: `1px solid ${UI.colors.sidebarBorder}`,
+                                          borderRadius: 999,
+                                          padding: '3px 8px',
+                                          flex: '0 0 auto',
+                                        }}
+                                      >
+                                        {online ? 'Online' : 'Offline'}
+                                      </div>
+                                    </div>
+                                    {a?.email ? <div style={{ color: UI.colors.sidebarMuted, fontSize: 12 }}>{a.email}</div> : null}
+                                    <div style={{ color: UI.colors.sidebarMuted, fontSize: 12 }}>
+                                      Active: {active ?? '—'} / {cap ?? '—'}
+                                    </div>
+                                  </div>
+                                )
+                              })
+                            : null}
+                        </div>
+                      ) : null}
                     </div>
                   ) : null}
                 </div>
@@ -1646,8 +1844,7 @@ export default function App() {
                         padding: 16,
                         borderRadius: 16,
                         border: `1px solid ${UI.colors.border}`,
-                        background:
-                          'linear-gradient(135deg, rgba(37,99,235,0.10) 0%, rgba(22,163,74,0.08) 55%, rgba(15,23,42,0.02) 100%)',
+                        background: `linear-gradient(135deg, ${UI.colors.primaryBg} 0%, rgba(41,51,37,0.02) 100%)`,
                       }}
                     >
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
@@ -1820,7 +2017,7 @@ export default function App() {
                             if (!entries.length || total <= 0) {
                               return <div style={{ color: UI.colors.muted, fontSize: 12, padding: '16px 0' }}>No data yet</div>
                             }
-                            const palette = ['#2563eb', '#16a34a', '#d97706', '#db2777', '#7c3aed', '#0891b2', '#0f766e', '#b91c1c']
+                            const palette = ['#4CBB17', '#48872B', '#39542C', '#293325', '#0f766e', '#d97706', '#b91c1c', '#7c3aed']
                             const size = 128
                             const stroke = 16
                             const r = (size - stroke) / 2
@@ -1895,75 +2092,78 @@ export default function App() {
 
             {activePanel === 'admin_users' && role === 'admin' ? (
               <div style={{ gridColumn: '2 / span 2' }}>
-                <Card>
+                <Card style={{ maxWidth: 1120, margin: '0 auto' }}>
                   <div style={{ display: 'grid', gap: 14 }}>
                     <div
                       style={{
-                        padding: 16,
+                        padding: 20,
                         borderRadius: 16,
                         border: `1px solid ${UI.colors.border}`,
-                        background:
-                          'linear-gradient(135deg, rgba(37,99,235,0.10) 0%, rgba(15,23,42,0.02) 65%, rgba(15,23,42,0.00) 100%)',
+                        background: `linear-gradient(135deg, ${UI.colors.primaryBg} 0%, rgba(41,51,37,0.00) 100%)`,
                       }}
                     >
-                      <div style={{ fontSize: 18, fontWeight: 950, letterSpacing: 0.2 }}>Admin: Users</div>
-                      <div style={{ color: UI.colors.muted, fontSize: 13, marginTop: 6 }}>Create a new user account.</div>
+                      <div style={{ fontSize: 20, fontWeight: 950, letterSpacing: 0.2 }}>Admin: Users</div>
+                      <div style={{ color: UI.colors.muted, fontSize: 14, marginTop: 6 }}>Create a new user account.</div>
                     </div>
 
-                    {adminCreateOk ? (
-                      <div
-                        style={{
-                          padding: 12,
-                          borderRadius: 14,
-                          border: `1px solid ${UI.colors.border}`,
-                          background: 'rgba(22, 163, 74, 0.08)',
-                          color: UI.colors.success,
-                          fontSize: 13,
-                        }}
-                      >
-                        {adminCreateOk}
-                      </div>
-                    ) : null}
-                    {adminCreateError ? (
-                      <div
-                        style={{
-                          padding: 12,
-                          borderRadius: 14,
-                          border: `1px solid ${UI.colors.border}`,
-                          background: 'rgba(220, 38, 38, 0.06)',
-                          color: UI.colors.danger,
-                          fontSize: 13,
-                        }}
-                      >
-                        {adminCreateError}
-                      </div>
-                    ) : null}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: 14, alignItems: 'start' }}>
+                      <div style={{ display: 'grid', gap: 12 }}>
+                        {adminCreateOk ? (
+                          <div
+                            style={{
+                              padding: 12,
+                              borderRadius: 14,
+                              border: `1px solid ${UI.colors.border}`,
+                              background: 'rgba(22, 163, 74, 0.08)',
+                              color: UI.colors.success,
+                              fontSize: 13,
+                            }}
+                          >
+                            {adminCreateOk}
+                          </div>
+                        ) : null}
+                        {adminCreateError ? (
+                          <div
+                            style={{
+                              padding: 12,
+                              borderRadius: 14,
+                              border: `1px solid ${UI.colors.border}`,
+                              background: 'rgba(220, 38, 38, 0.06)',
+                              color: UI.colors.danger,
+                              fontSize: 13,
+                            }}
+                          >
+                            {adminCreateError}
+                          </div>
+                        ) : null}
 
-                    <form onSubmit={adminCreateUser} style={{ display: 'grid', gap: 12, maxWidth: 720 }}>
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
-                        <Field label="Username">
-                          <Input value={adminNewUsername} onChange={(e) => setAdminNewUsername(e.target.value)} placeholder="username" required />
-                        </Field>
-                        <Field label="Email" hint="Optional">
-                          <Input value={adminNewEmail} onChange={(e) => setAdminNewEmail(e.target.value)} placeholder="email" />
-                        </Field>
+                        <form onSubmit={adminCreateUser} style={{ display: 'grid', gap: 16 }}>
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 14 }}>
+                            <Field label="Username">
+                              <Input value={adminNewUsername} onChange={(e) => setAdminNewUsername(e.target.value)} placeholder="username" required style={{ height: 50, padding: '13px 16px', borderRadius: 14, fontSize: 15 }} />
+                            </Field>
+                            <Field label="Email" hint="Optional">
+                              <Input value={adminNewEmail} onChange={(e) => setAdminNewEmail(e.target.value)} placeholder="email" style={{ height: 50, padding: '13px 16px', borderRadius: 14, fontSize: 15 }} />
+                            </Field>
+                          </div>
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 14 }}>
+                            <Field label="Password">
+                              <Input value={adminNewPassword} onChange={(e) => setAdminNewPassword(e.target.value)} placeholder="password" type="password" required style={{ height: 50, padding: '13px 16px', borderRadius: 14, fontSize: 15 }} />
+                            </Field>
+                            <Field label="Role">
+                              <Select value={adminNewRole} onChange={(e) => setAdminNewRole(e.target.value)} style={{ height: 50, padding: '13px 16px', borderRadius: 14, fontSize: 15 }}>
+                                <option value="agent">agent</option>
+                                <option value="admin">admin</option>
+                                <option value="customer">customer</option>
+                              </Select>
+                            </Field>
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 4 }}>
+                            <Button type="submit" style={{ padding: '12px 18px', borderRadius: 14, fontSize: 14, fontWeight: 900 }}>Create user</Button>
+                          </div>
+                        </form>
                       </div>
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
-                        <Field label="Password">
-                          <Input value={adminNewPassword} onChange={(e) => setAdminNewPassword(e.target.value)} placeholder="password" type="password" required />
-                        </Field>
-                        <Field label="Role">
-                          <Select value={adminNewRole} onChange={(e) => setAdminNewRole(e.target.value)}>
-                            <option value="agent">agent</option>
-                            <option value="admin">admin</option>
-                            <option value="customer">customer</option>
-                          </Select>
-                        </Field>
-                      </div>
-                      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                        <Button type="submit">Create user</Button>
-                      </div>
-                    </form>
+                    </div>
                   </div>
                 </Card>
               </div>
@@ -2110,7 +2310,7 @@ export default function App() {
 
             {activePanel === 'tickets' || activePanel === 'presence' ? (
               <>
-            <Card>
+            <Card style={{ height: 'calc(100vh - 116px)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div>
                   <div style={{ fontSize: 14, fontWeight: 900 }}>Tickets</div>
@@ -2204,7 +2404,8 @@ export default function App() {
               <div
                 style={{
                   marginTop: 12,
-                  height: 'calc(100vh - 240px)',
+                  flex: 1,
+                  minHeight: 0,
                   overflow: 'auto',
                   border: `1px solid ${UI.colors.border}`,
                   borderRadius: 14,
@@ -2230,20 +2431,20 @@ export default function App() {
                           onClick={() => setSelectedTicketId(t.id)}
                           style={{
                             cursor: 'pointer',
-                            background: active ? 'rgba(37,99,235,0.09)' : idx % 2 === 1 ? 'rgba(15,23,42,0.02)' : UI.colors.surface,
+                            background: active ? UI.colors.primaryBg : idx % 2 === 1 ? 'rgba(41,51,37,0.03)' : UI.colors.surface,
                             transition: 'background 140ms ease, box-shadow 140ms ease',
-                            boxShadow: active ? 'inset 3px 0 0 rgba(37,99,235,0.9)' : 'none',
+                            boxShadow: active ? `inset 3px 0 0 ${UI.colors.primary}` : 'none',
                           }}
                           onMouseEnter={(e) => {
                             try {
-                              if (!active) e.currentTarget.style.background = 'rgba(15,23,42,0.04)'
+                              e.currentTarget.style.background = active ? UI.colors.primaryBg : UI.colors.surface2
                             } catch {
                               // ignore
                             }
                           }}
                           onMouseLeave={(e) => {
                             try {
-                              e.currentTarget.style.background = active ? 'rgba(37,99,235,0.08)' : UI.colors.surface
+                              e.currentTarget.style.background = active ? UI.colors.primaryBg : UI.colors.surface
                             } catch {
                               // ignore
                             }
@@ -2258,7 +2459,7 @@ export default function App() {
                           </td>
                           <td style={{ padding: '8px 12px', borderBottom: `1px solid ${UI.colors.border}`, fontSize: 12, color: UI.colors.muted }}>{t.priority}</td>
                           <td style={{ padding: '8px 12px', borderBottom: `1px solid ${UI.colors.border}`, fontSize: 12, color: UI.colors.muted }}>
-                            {t.assigned_agent ?? '—'}
+                            {t.assigned_agent_username ?? t.assigned_agent ?? '—'}
                           </td>
                         </tr>
                       )
@@ -2268,29 +2469,31 @@ export default function App() {
               </div>
             </Card>
 
-            <Card>
+            <Card style={{ height: 'calc(100vh - 116px)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
               {!selectedTicket ? (
                 <div style={{ color: UI.colors.muted }}>Select a ticket to view details.</div>
               ) : (
-                <div style={{ display: 'grid', gap: 12 }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10, minHeight: 0 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                     <div style={{ fontSize: 15, fontWeight: 900, minWidth: 0, wordBreak: 'break-word', flex: '1 1 260px' }}>
                       #{selectedTicket.id} {selectedTicket.subject}
                     </div>
                     <StatusPill status={selectedTicket.status} />
                   </div>
-                  <div style={{ color: UI.colors.muted, fontSize: 13 }}>{selectedTicket.description}</div>
-                  <div style={{ color: UI.colors.muted, fontSize: 12 }}>assigned_agent: {selectedTicket.assigned_agent ?? '—'}</div>
+                  <div style={{ color: UI.colors.muted, fontSize: 12 }}>{selectedTicket.description}</div>
+                  <div style={{ color: UI.colors.muted, fontSize: 12 }}>
+                    assigned_agent: {selectedTicket.assigned_agent_username ?? selectedTicket.assigned_agent ?? '—'}
+                  </div>
 
                   {(role === 'agent' || role === 'admin') && (
-                    <div style={{ display: 'grid', gap: 10, padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}`, background: UI.colors.surface2 }}>
+                    <div style={{ display: 'grid', gap: 8, padding: 10, borderRadius: 12, border: `1px solid ${UI.colors.border}`, background: UI.colors.surface2 }}>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
                         <div style={{ fontSize: 13, fontWeight: 900 }}>AI Draft</div>
                         <Button type="button" variant="primary" onClick={generateAIDraft} style={{ padding: '8px 10px' }} disabled={aiDraftLoading}>
                           {aiDraftLoading ? 'Generating…' : 'Generate'}
                         </Button>
                       </div>
-                      <Textarea value={aiDraft} onChange={(e) => setAiDraft(e.target.value)} placeholder="AI suggested reply will appear here…" rows={3} />
+                      <Textarea value={aiDraft} onChange={(e) => setAiDraft(e.target.value)} placeholder="AI suggested reply will appear here…" rows={2} />
                       <ActionRow>
                         <Button type="button" variant="ghost" onClick={() => setAiDraft('')} style={{ whiteSpace: 'nowrap' }}>
                           Clear
@@ -2308,7 +2511,7 @@ export default function App() {
                     <div style={{ color: UI.colors.muted, fontSize: 12 }}>{messages.length} messages</div>
                   </div>
 
-                  <div style={{ height: 'calc(100vh - 420px)', overflow: 'auto', display: 'grid', gap: 10, paddingRight: 4 }}>
+                  <div style={{ flex: 1, minHeight: 0, overflow: 'auto', display: 'grid', gap: 10, paddingRight: 4 }}>
                     {messages.map((m) => (
                       (() => {
                         const author = m.author
@@ -2345,8 +2548,8 @@ export default function App() {
                               m.is_internal
                                 ? 'rgba(217,119,6,0.14)'
                                 : isMine
-                                  ? 'rgba(22,163,74,0.12)'
-                                  : 'rgba(37,99,235,0.12)'
+                                  ? UI.colors.primaryBg
+                                  : UI.colors.primaryBg
                             }`,
                             gridColumn: isMine ? 1 : 2,
                             justifySelf: isMine ? 'start' : 'end',
@@ -2356,7 +2559,7 @@ export default function App() {
                           style={{
                             padding: 12,
                             borderRadius: 12,
-                            background: m.is_internal ? UI.colors.surface : isMine ? 'rgba(22,163,74,0.08)' : UI.colors.surface,
+                            background: m.is_internal ? UI.colors.surface : isMine ? UI.colors.primaryBg : UI.colors.surface,
                             border: `1px solid ${UI.colors.border}`,
                             gridColumn: isMine ? 2 : 1,
                           }}
@@ -2444,14 +2647,74 @@ export default function App() {
                       ) : null}
                     </div>
                     {sendMessageError ? <div style={{ color: UI.colors.danger, fontSize: 13 }}>{sendMessageError}</div> : null}
-                    <input
-                      type="file"
-                      multiple
-                      onChange={(e) => {
-                        const files = Array.from(e.target.files || [])
-                        setNewMessageFiles(files)
-                      }}
-                    />
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        onClick={() => {
+                          try {
+                            newMessageFilesInputRef.current?.click?.()
+                          } catch {
+                            // ignore
+                          }
+                        }}
+                        style={{ padding: '8px 10px', borderRadius: 12 }}
+                      >
+                        Choose files
+                      </Button>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div style={{ color: UI.colors.muted, fontSize: 12, fontWeight: 650 }}>
+                          {newMessageFiles?.length
+                            ? `${newMessageFiles.length} file${newMessageFiles.length === 1 ? '' : 's'} selected`
+                            : 'No files selected'}
+                        </div>
+                        {newMessageFiles?.length ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setNewMessageFiles([])
+                              try {
+                                if (newMessageFilesInputRef.current) newMessageFilesInputRef.current.value = ''
+                              } catch {
+                                // ignore
+                              }
+                            }}
+                            title="Remove attachments"
+                            style={{
+                              width: 22,
+                              height: 22,
+                              borderRadius: 999,
+                              border: `1px solid ${UI.colors.border}`,
+                              background: UI.colors.surface2,
+                              color: UI.colors.muted,
+                              display: 'grid',
+                              placeItems: 'center',
+                              cursor: 'pointer',
+                              lineHeight: '1px',
+                              fontSize: 14,
+                              fontWeight: 900,
+                            }}
+                          >
+                            ×
+                          </button>
+                        ) : null}
+                      </div>
+                      {newMessageFiles?.length ? (
+                        <div style={{ width: '100%', color: UI.colors.muted, fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {newMessageFiles.map((f) => f?.name || 'file').join(', ')}
+                        </div>
+                      ) : null}
+                      <input
+                        ref={newMessageFilesInputRef}
+                        type="file"
+                        multiple
+                        style={{ display: 'none' }}
+                        onChange={(e) => {
+                          const files = Array.from(e.target.files || [])
+                          setNewMessageFiles(files)
+                        }}
+                      />
+                    </div>
                     {(role === 'agent' || role === 'admin') && (
                       <label style={{ display: 'flex', gap: 8, alignItems: 'center', color: UI.colors.text, fontSize: 13 }}>
                         <input type="checkbox" checked={newMessageInternal} onChange={(e) => setNewMessageInternal(e.target.checked)} />
