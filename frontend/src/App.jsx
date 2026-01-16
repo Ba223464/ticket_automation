@@ -263,8 +263,14 @@ function AttachmentViewer({ open, attachment, onClose }) {
     const run = async () => {
       try {
         if (!open || !url) return
-        const res = await fetch(url)
-        if (!res.ok) return
+        const access = localStorage.getItem(TOKEN_KEY) || ''
+        const res = await fetch(url, {
+          headers: access ? { Authorization: `Bearer ${access}` } : undefined,
+        })
+        if (!res.ok) {
+          if (!cancelled) setTextPreviewError(`Unable to preview file (HTTP ${res.status})`)
+          return
+        }
         const blob = await res.blob()
         createdUrl = URL.createObjectURL(blob)
         if (!cancelled) setBlobUrl(createdUrl)
@@ -278,7 +284,7 @@ function AttachmentViewer({ open, attachment, onClose }) {
           }
         }
       } catch {
-        // ignore
+        if (!cancelled) setTextPreviewError('Unable to preview file')
       }
     }
 
@@ -295,7 +301,7 @@ function AttachmentViewer({ open, attachment, onClose }) {
         // ignore
       }
     }
-  }, [open, url])
+  }, [open, url, isText])
 
   const previewUrl = blobUrl || url
 
@@ -339,13 +345,13 @@ function AttachmentViewer({ open, attachment, onClose }) {
             </Button>
           </ActionRow>
         </div>
-        <div style={{ background: UI.colors.surface2, borderTop: `1px solid ${UI.colors.border}` }}>
+        <div style={{ background: UI.colors.surface2, borderTop: `1px solid ${UI.colors.border}`, overflow: 'auto' }}>
           {isDocx ? (
             <div style={{ padding: 12, color: UI.colors.muted, fontSize: 13 }}>
               Preview is not available for Word documents. Use the Open link above.
             </div>
           ) : isText ? (
-            <div style={{ width: '100%', height: '100%', overflow: 'auto', padding: 12 }}>
+            <div style={{ width: '100%', minHeight: '100%', padding: 12 }}>
               {textPreviewError ? (
                 <div style={{ color: UI.colors.danger, fontSize: 13 }}>{textPreviewError}</div>
               ) : (
@@ -368,7 +374,7 @@ function AttachmentViewer({ open, attachment, onClose }) {
               )}
             </div>
           ) : isImage ? (
-            <div style={{ width: '100%', height: '100%', overflow: 'auto', padding: 12 }}>
+            <div style={{ width: '100%', minHeight: '100%', padding: 12 }}>
               <img
                 src={previewUrl}
                 alt={name}
@@ -677,6 +683,7 @@ export default function App() {
   const [newMessage, setNewMessage] = useState('')
   const [newMessageInternal, setNewMessageInternal] = useState(false)
   const [newMessageFiles, setNewMessageFiles] = useState([])
+  const [sendMessageError, setSendMessageError] = useState('')
 
   const [aiDraft, setAiDraft] = useState('')
   const [aiDraftLoading, setAiDraftLoading] = useState(false)
@@ -684,6 +691,8 @@ export default function App() {
 
   const [availability, setAvailability] = useState(null)
   const wsRef = useRef(null)
+
+  const didSetInitialPanelRef = useRef(false)
 
   const [viewerOpen, setViewerOpen] = useState(false)
   const [viewerAttachment, setViewerAttachment] = useState(null)
@@ -699,6 +708,7 @@ export default function App() {
   const [analyticsResolution, setAnalyticsResolution] = useState(null)
   const [analyticsVolume, setAnalyticsVolume] = useState(null)
   const [analyticsError, setAnalyticsError] = useState('')
+  const [analyticsDays, setAnalyticsDays] = useState(30)
 
   const [agentQueueSort, setAgentQueueSort] = useState('oldest')
 
@@ -875,6 +885,16 @@ export default function App() {
       },
     })
     setUser(u)
+
+    try {
+      const nextRole = u?.profile?.role || null
+      if (!didSetInitialPanelRef.current && nextRole === 'admin') {
+        didSetInitialPanelRef.current = true
+        setActivePanel('tickets')
+      }
+    } catch {
+      // ignore
+    }
   }
 
   async function login(e) {
@@ -1151,50 +1171,81 @@ export default function App() {
     e.preventDefault()
     if (!token || !selectedTicketId) return
 
-    const hasFiles = Array.isArray(newMessageFiles) && newMessageFiles.length > 0
-    let created
-    if (!hasFiles) {
-      created = await apiFetch(`/api/tickets/${selectedTicketId}/messages/`, {
-        method: 'POST',
-        token,
-        body: {
-          body: newMessage,
-          is_internal: newMessageInternal,
-        },
-      })
-    } else {
-      const baseUrl = getApiBaseUrl()
-      const fd = new FormData()
-      fd.append('body', newMessage)
-      fd.append('is_internal', newMessageInternal ? 'true' : 'false')
-      for (const f of newMessageFiles) fd.append('files', f)
+    setSendMessageError('')
 
-      const res = await fetch(`${baseUrl}/api/tickets/${selectedTicketId}/messages/`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-        body: fd,
-      })
-      const text = await res.text()
-      const data = text ? safeJsonParse(text) : null
-      if (!res.ok) {
-        const detail = (data && (data.detail || data.message)) || text || `HTTP ${res.status}`
-        const err = new Error(detail)
-        err.status = res.status
-        err.data = data
-        throw err
+    const hasFiles = Array.isArray(newMessageFiles) && newMessageFiles.length > 0
+    try {
+      let created
+      if (!hasFiles) {
+        created = await apiFetch(`/api/tickets/${selectedTicketId}/messages/`, {
+          method: 'POST',
+          token,
+          body: {
+            body: newMessage,
+            is_internal: newMessageInternal,
+          },
+        })
+      } else {
+        const baseUrl = getApiBaseUrl()
+        const latestAccess = localStorage.getItem(TOKEN_KEY) || ''
+        const accessToken = latestAccess || token
+        const fd = new FormData()
+        fd.append('body', newMessage)
+        fd.append('is_internal', newMessageInternal ? 'true' : 'false')
+        for (const f of newMessageFiles) fd.append('files', f)
+
+        const doUpload = async (access) => {
+          const res = await fetch(`${baseUrl}/api/tickets/${selectedTicketId}/messages/`, {
+            method: 'POST',
+            headers: access ? { Authorization: `Bearer ${access}` } : undefined,
+            body: fd,
+          })
+          const text = await res.text()
+          const data = text ? safeJsonParse(text) : null
+          return { res, text, data }
+        }
+
+        let first = await doUpload(accessToken)
+        if (first.res.status === 401) {
+          const refresh = localStorage.getItem(REFRESH_KEY) || ''
+          if (refresh) {
+            const refreshRes = await fetch(`${baseUrl}/api/auth/token/refresh/`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ refresh }),
+            })
+            const refreshText = await refreshRes.text()
+            const refreshData = refreshText ? safeJsonParse(refreshText) : null
+            if (refreshRes.ok && refreshData?.access) {
+              localStorage.setItem(TOKEN_KEY, refreshData.access)
+              setToken(refreshData.access)
+              first = await doUpload(refreshData.access)
+            }
+          }
+        }
+
+        if (!first.res.ok) {
+          const detail = (first.data && (first.data.detail || first.data.message)) || first.text || `HTTP ${first.res.status}`
+          const err = new Error(detail)
+          err.status = first.res.status
+          err.data = first.data
+          throw err
+        }
+
+        created = first.data
       }
-      created = data
+
+      setNewMessage('')
+      setNewMessageInternal(false)
+      setNewMessageFiles([])
+      setMessages((prev) => {
+        const exists = prev.some((m) => m.id === created.id)
+        if (exists) return prev
+        return [...prev, created]
+      })
+    } catch (err) {
+      setSendMessageError(err?.message || 'Unable to send message')
     }
-    setNewMessage('')
-    setNewMessageInternal(false)
-    setNewMessageFiles([])
-    setMessages((prev) => {
-      const exists = prev.some((m) => m.id === created.id)
-      if (exists) return prev
-      return [...prev, created]
-    })
   }
 
   async function generateAIDraft() {
@@ -1264,7 +1315,7 @@ export default function App() {
     Promise.all([
       apiFetch('/api/analytics/summary/', { token }),
       apiFetch('/api/analytics/resolution/', { token }),
-      apiFetch('/api/analytics/volume/?days=30', { token }),
+      apiFetch(`/api/analytics/volume/?days=${analyticsDays}`, { token }),
     ])
       .then(([s, r, v]) => {
         if (cancelled) return
@@ -1279,7 +1330,7 @@ export default function App() {
     return () => {
       cancelled = true
     }
-  }, [token, role])
+  }, [token, role, analyticsDays])
 
   return (
     <div
@@ -1516,79 +1567,13 @@ export default function App() {
                         Admin: Users
                       </SidebarItem>
                       <SidebarItem active={activePanel === 'admin_analytics'} onClick={() => setActivePanel('admin_analytics')}>
-                        Admin: Analytics
+                        Admin: Analytics (Dashboard)
                       </SidebarItem>
                     </>
                   ) : null}
                 </div>
 
                 <div style={{ marginTop: 14, borderTop: `1px solid ${UI.colors.sidebarBorder}`, paddingTop: 14 }}>
-                  {activePanel === 'new_ticket' && role === 'customer' ? (
-                    <div style={{ display: 'grid', gap: 10 }}>
-                      <div style={{ fontWeight: 900, color: UI.colors.sidebarText }}>Create ticket</div>
-                      <form onSubmit={createTicket} style={{ display: 'grid', gap: 8 }}>
-                        <Field label="Subject">
-                          <Input
-                            value={newTicketSubject}
-                            onChange={(e) => setNewTicketSubject(e.target.value)}
-                            placeholder="Subject"
-                            required
-                          />
-                        </Field>
-                        <Field label="Description">
-                          <div style={{ display: 'grid', gap: 8 }}>
-                            <Textarea
-                              value={newTicketDescription}
-                              onChange={(e) => setNewTicketDescription(e.target.value)}
-                              placeholder="Description"
-                              rows={3}
-                            />
-                            {sttSupported ? (
-                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    if (sttListening && sttTarget === 'new_ticket_description') stopStt()
-                                    else startStt('new_ticket_description')
-                                  }}
-                                  title={sttListening && sttTarget === 'new_ticket_description' ? 'Stop voice' : 'Voice to text'}
-                                  style={{
-                                    width: 36,
-                                    height: 36,
-                                    borderRadius: 10,
-                                    border: `1px solid ${UI.colors.border}`,
-                                    background: sttListening && sttTarget === 'new_ticket_description' ? UI.colors.primary : UI.colors.surface,
-                                    boxShadow: `0 1px 2px ${UI.colors.shadow}`,
-                                    display: 'grid',
-                                    placeItems: 'center',
-                                    cursor: 'pointer',
-                                  }}
-                                >
-                                  <MicIcon active={sttListening && sttTarget === 'new_ticket_description'} />
-                                </button>
-                                <div style={{ flex: 1, minWidth: 0 }}>
-                                  <div style={{ fontSize: 12, color: UI.colors.sidebarMuted }}>
-                                    {sttListening && sttTarget === 'new_ticket_description' ? 'Listening…' : 'Voice input'}
-                                  </div>
-                                  {sttError ? <div style={{ fontSize: 12, color: UI.colors.danger, marginTop: 2 }}>{sttError}</div> : null}
-                                </div>
-                              </div>
-                            ) : null}
-                          </div>
-                        </Field>
-                        <Field label="Priority">
-                          <Select value={newTicketPriority} onChange={(e) => setNewTicketPriority(e.target.value)}>
-                            <option value="LOW">LOW</option>
-                            <option value="MEDIUM">MEDIUM</option>
-                            <option value="HIGH">HIGH</option>
-                            <option value="URGENT">URGENT</option>
-                          </Select>
-                        </Field>
-                        <Button type="submit">Create</Button>
-                      </form>
-                    </div>
-                  ) : null}
-
                   {activePanel === 'presence' && (role === 'agent' || role === 'admin') ? (
                     <div style={{ display: 'grid', gap: 10 }}>
                       <div style={{ fontWeight: 900, color: UI.colors.sidebarText }}>Availability</div>
@@ -1648,100 +1633,324 @@ export default function App() {
                       ) : null}
                     </div>
                   ) : null}
+                </div>
+              </div>
+            </div>
 
-                  {activePanel === 'agent_queue' && (role === 'agent' || role === 'admin') ? (
-                    <div style={{ display: 'grid', gap: 10 }}>
-                      <div style={{ fontWeight: 900, color: UI.colors.sidebarText }}>Agent queue</div>
-                      <div style={{ color: UI.colors.sidebarMuted, fontSize: 12 }}>
-                        Sorted by: {agentQueueSort}
+            {activePanel === 'admin_analytics' && role === 'admin' ? (
+              <div style={{ gridColumn: '2 / span 2' }}>
+                <Card>
+                  <div style={{ display: 'grid', gap: 14 }}>
+                    <div
+                      style={{
+                        padding: 16,
+                        borderRadius: 16,
+                        border: `1px solid ${UI.colors.border}`,
+                        background:
+                          'linear-gradient(135deg, rgba(37,99,235,0.10) 0%, rgba(22,163,74,0.08) 55%, rgba(15,23,42,0.02) 100%)',
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
+                        <div style={{ display: 'grid', gap: 6 }}>
+                          <div style={{ fontSize: 18, fontWeight: 950, letterSpacing: 0.2 }}>Analytics Dashboard</div>
+                          <div style={{ fontSize: 13, color: UI.colors.muted, maxWidth: 520, lineHeight: '18px' }}>
+                            Track volume, resolution speed, and status breakdown.
+                          </div>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'stretch', gap: 8, flexWrap: 'wrap' }}>
+                          <Select
+                            value={String(analyticsDays)}
+                            onChange={(e) => setAnalyticsDays(parseInt(e.target.value, 10) || 30)}
+                            style={{ height: 36, paddingTop: 8, paddingBottom: 8 }}
+                          >
+                            <option value="7">Last 7 days</option>
+                            <option value="30">Last 30 days</option>
+                            <option value="90">Last 90 days</option>
+                          </Select>
+                          <Button
+                            variant="ghost"
+                            onClick={() => {
+                              setAnalyticsSummary(null)
+                              setAnalyticsResolution(null)
+                              setAnalyticsVolume(null)
+                              setAnalyticsError('')
+                              apiFetch('/api/analytics/summary/', { token })
+                                .then((s) => setAnalyticsSummary(s))
+                                .catch((e) => setAnalyticsError(e.message))
+                              apiFetch('/api/analytics/resolution/', { token })
+                                .then((r) => setAnalyticsResolution(r))
+                                .catch((e) => setAnalyticsError(e.message))
+                              apiFetch(`/api/analytics/volume/?days=${analyticsDays}`, { token })
+                                .then((v) => setAnalyticsVolume(v))
+                                .catch((e) => setAnalyticsError(e.message))
+                            }}
+                            style={{ height: 36, padding: '6px 12px' }}
+                          >
+                            Refresh
+                          </Button>
+                        </div>
                       </div>
-                      <Select value={agentQueueSort} onChange={(e) => setAgentQueueSort(e.target.value)}>
-                        <option value="oldest">Oldest</option>
-                        <option value="priority">Priority</option>
-                      </Select>
+                    </div>
 
-                      {(() => {
-                        const grouped = {
-                          OPEN: [],
-                          ASSIGNED: [],
-                          IN_PROGRESS: [],
-                          WAITING_ON_CUSTOMER: [],
-                          RESOLVED: [],
-                          CLOSED: [],
-                        }
-                        for (const t of tickets) {
-                          const k = t.status || 'OPEN'
-                          if (!grouped[k]) grouped[k] = []
-                          grouped[k].push(t)
-                        }
+                    {analyticsError ? (
+                      <div
+                        style={{
+                          padding: 12,
+                          borderRadius: 14,
+                          border: `1px solid ${UI.colors.border}`,
+                          background: 'rgba(220, 38, 38, 0.06)',
+                          color: UI.colors.danger,
+                          fontSize: 13,
+                        }}
+                      >
+                        {analyticsError}
+                      </div>
+                    ) : null}
 
-                        const order = ['OPEN', 'ASSIGNED', 'IN_PROGRESS', 'WAITING_ON_CUSTOMER', 'RESOLVED', 'CLOSED']
-                        return (
-                          <div style={{ display: 'grid', gap: 10 }}>
-                            {order.map((k) => {
-                              const list = sortTickets(grouped[k] || [], agentQueueSort)
-                              if (list.length === 0) return null
-                              return (
-                                <div key={k} style={{ display: 'grid', gap: 8, padding: 10, borderRadius: 12, border: `1px solid ${UI.colors.sidebarBorder}`, background: UI.colors.sidebarSurface }}>
-                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
-                                    <div style={{ color: UI.colors.sidebarText, fontWeight: 900, fontSize: 12 }}>{k}</div>
-                                    <div style={{ color: UI.colors.sidebarMuted, fontSize: 12 }}>{list.length}</div>
-                                  </div>
-                                  <div style={{ display: 'grid', gap: 6 }}>
-                                    {list.slice(0, 20).map((t) => (
-                                      <button
-                                        key={t.id}
-                                        onClick={() => setSelectedTicketId(t.id)}
-                                        style={{
-                                          textAlign: 'left',
-                                          width: '100%',
-                                          padding: '8px 10px',
-                                          borderRadius: 10,
-                                          border: `1px solid ${UI.colors.sidebarBorder}`,
-                                          background: 'rgba(255,255,255,0.06)',
-                                          color: UI.colors.sidebarText,
-                                          cursor: 'pointer',
-                                        }}
-                                      >
-                                        <div style={{ fontWeight: 900, fontSize: 12 }}>#{t.id} {t.subject}</div>
-                                        <div style={{ fontSize: 12, color: UI.colors.sidebarMuted, marginTop: 2 }}>
-                                          {t.priority}
-                                        </div>
-                                      </button>
-                                    ))}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
+                      <div
+                        style={{
+                          padding: 14,
+                          borderRadius: 16,
+                          border: `1px solid ${UI.colors.border}`,
+                          background: UI.colors.surface2,
+                          boxShadow: `0 10px 24px ${UI.colors.shadow}`,
+                        }}
+                      >
+                        <div style={{ color: UI.colors.muted, fontSize: 12 }}>Total tickets</div>
+                        <div style={{ fontSize: 26, fontWeight: 950, marginTop: 8, letterSpacing: 0.2 }}>{analyticsSummary?.total ?? '—'}</div>
+                      </div>
+                      <div
+                        style={{
+                          padding: 14,
+                          borderRadius: 16,
+                          border: `1px solid ${UI.colors.border}`,
+                          background: UI.colors.surface2,
+                          boxShadow: `0 10px 24px ${UI.colors.shadow}`,
+                        }}
+                      >
+                        <div style={{ color: UI.colors.muted, fontSize: 12 }}>Open / Unresolved</div>
+                        <div style={{ fontSize: 26, fontWeight: 950, marginTop: 8, letterSpacing: 0.2 }}>{analyticsSummary?.open_like ?? '—'}</div>
+                      </div>
+                      <div
+                        style={{
+                          padding: 14,
+                          borderRadius: 16,
+                          border: `1px solid ${UI.colors.border}`,
+                          background: UI.colors.surface2,
+                          boxShadow: `0 10px 24px ${UI.colors.shadow}`,
+                        }}
+                      >
+                        <div style={{ color: UI.colors.muted, fontSize: 12 }}>Avg resolution</div>
+                        <div style={{ fontSize: 18, fontWeight: 950, marginTop: 10 }}>
+                          {typeof analyticsResolution?.avg_resolution_seconds === 'number'
+                            ? `${Math.round(analyticsResolution.avg_resolution_seconds / 3600)}h`
+                            : '—'}
+                        </div>
+                        <div style={{ color: UI.colors.muted, fontSize: 12, marginTop: 6 }}>from {analyticsResolution?.resolved_count ?? '—'} resolved</div>
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1.35fr 1fr', gap: 10, alignItems: 'start' }}>
+                      <div
+                        style={{
+                          padding: 14,
+                          borderRadius: 16,
+                          border: `1px solid ${UI.colors.border}`,
+                          background: UI.colors.surface2,
+                          boxShadow: `0 10px 24px ${UI.colors.shadow}`,
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 10 }}>
+                          <div style={{ fontWeight: 950, fontSize: 12, color: UI.colors.text }}>Volume (last {analyticsDays} days)</div>
+                          <div style={{ fontSize: 12, color: UI.colors.muted }}>{analyticsVolume?.series?.length ? `${analyticsVolume.series.length} points` : ''}</div>
+                        </div>
+                        <div style={{ marginTop: 12 }}>
+                          {(() => {
+                            const series = analyticsVolume?.series || []
+                            if (!series.length) {
+                              return <div style={{ color: UI.colors.muted, fontSize: 12, padding: '16px 0' }}>No data yet</div>
+                            }
+                            const w = 900
+                            const h = 170
+                            const pad = 10
+                            const maxY = Math.max(1, ...series.map((p) => p.count || 0))
+                            const pts = series.map((p, i) => {
+                              const x = pad + (i * (w - pad * 2)) / Math.max(1, series.length - 1)
+                              const y = pad + (h - pad * 2) * (1 - (p.count || 0) / maxY)
+                              return `${x.toFixed(2)},${y.toFixed(2)}`
+                            })
+                            const last = series[series.length - 1]?.count ?? null
+                            const sum = series.reduce((a, p) => a + (p.count || 0), 0)
+                            return (
+                              <div style={{ display: 'grid', gap: 10 }}>
+                                <div style={{ borderRadius: 14, border: `1px solid ${UI.colors.border}`, background: UI.colors.surface, padding: 10 }}>
+                                  <svg width="100%" viewBox={`0 0 ${w} ${h}`} style={{ display: 'block' }}>
+                                    <polyline points={pts.join(' ')} fill="none" stroke={UI.colors.primary} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+                                    <line x1={pad} y1={h - pad} x2={w - pad} y2={h - pad} stroke={UI.colors.border} strokeWidth="1" />
+                                  </svg>
+                                </div>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+                                  <div style={{ fontSize: 12, color: UI.colors.muted }}>Total: <span style={{ color: UI.colors.text, fontWeight: 900 }}>{sum}</span></div>
+                                  <div style={{ fontSize: 12, color: UI.colors.muted }}>Latest: <span style={{ color: UI.colors.text, fontWeight: 900 }}>{last ?? '—'}</span></div>
+                                </div>
+                              </div>
+                            )
+                          })()}
+                        </div>
+                      </div>
+
+                      <div
+                        style={{
+                          padding: 14,
+                          borderRadius: 16,
+                          border: `1px solid ${UI.colors.border}`,
+                          background: UI.colors.surface2,
+                          boxShadow: `0 10px 24px ${UI.colors.shadow}`,
+                        }}
+                      >
+                        <div style={{ fontWeight: 950, fontSize: 12, color: UI.colors.text }}>By status</div>
+                        <div style={{ marginTop: 12 }}>
+                          {(() => {
+                            const byStatus = analyticsSummary?.by_status || {}
+                            const entries = Object.entries(byStatus)
+                              .map(([k, v]) => [k, Number(v) || 0])
+                              .sort((a, b) => b[1] - a[1])
+                            const total = entries.reduce((a, [, v]) => a + v, 0)
+                            if (!entries.length || total <= 0) {
+                              return <div style={{ color: UI.colors.muted, fontSize: 12, padding: '16px 0' }}>No data yet</div>
+                            }
+                            const palette = ['#2563eb', '#16a34a', '#d97706', '#db2777', '#7c3aed', '#0891b2', '#0f766e', '#b91c1c']
+                            const size = 128
+                            const stroke = 16
+                            const r = (size - stroke) / 2
+                            const cx = size / 2
+                            const cy = size / 2
+                            const c = 2 * Math.PI * r
+                            let acc = 0
+                            return (
+                              <div style={{ display: 'grid', gridTemplateColumns: '150px 1fr', gap: 12, alignItems: 'start' }}>
+                                <div style={{ display: 'grid', gap: 10, justifyItems: 'center' }}>
+                                  <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ display: 'block' }}>
+                                    <circle cx={cx} cy={cy} r={r} fill="none" stroke={UI.colors.border} strokeWidth={stroke} />
+                                    {entries.slice(0, 8).map(([k, v], idx) => {
+                                      const frac = v / total
+                                      const len = c * frac
+                                      const dash = `${len} ${c - len}`
+                                      const offset = c * (1 - acc)
+                                      acc += frac
+                                      return (
+                                        <circle
+                                          key={k}
+                                          cx={cx}
+                                          cy={cy}
+                                          r={r}
+                                          fill="none"
+                                          stroke={palette[idx % palette.length]}
+                                          strokeWidth={stroke}
+                                          strokeLinecap="butt"
+                                          strokeDasharray={dash}
+                                          strokeDashoffset={offset}
+                                          transform={`rotate(-90 ${cx} ${cy})`}
+                                        />
+                                      )
+                                    })}
+                                  </svg>
+                                  <div style={{ textAlign: 'center' }}>
+                                    <div style={{ fontSize: 22, fontWeight: 950, color: UI.colors.text, lineHeight: '22px' }}>{total}</div>
+                                    <div style={{ fontSize: 12, color: UI.colors.muted, marginTop: 4 }}>tickets</div>
                                   </div>
                                 </div>
-                              )
-                            })}
-                          </div>
-                        )
-                      })()}
-                    </div>
-                  ) : null}
 
-                  {activePanel === 'admin_users' && role === 'admin' ? (
-                    <div style={{ display: 'grid', gap: 10 }}>
-                      <div style={{ fontWeight: 900, color: UI.colors.sidebarText }}>Create user</div>
-                      <form onSubmit={adminCreateUser} style={{ display: 'grid', gap: 8 }}>
+                                <div style={{ display: 'grid', gap: 10 }}>
+                                  {entries.slice(0, 8).map(([k, v], idx) => {
+                                    const pct = Math.round((v / total) * 100)
+                                    const color = palette[idx % palette.length]
+                                    return (
+                                      <div key={k} style={{ display: 'grid', gap: 6 }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+                                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                                            <div style={{ width: 10, height: 10, borderRadius: 999, background: color, flex: '0 0 auto' }} />
+                                            <div style={{ fontSize: 12, color: UI.colors.text, fontWeight: 900, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{k}</div>
+                                          </div>
+                                          <div style={{ fontSize: 12, color: UI.colors.muted, flex: '0 0 auto' }}>{v} ({pct}%)</div>
+                                        </div>
+                                        <div style={{ height: 9, borderRadius: 999, background: 'rgba(15, 23, 42, 0.08)', overflow: 'hidden', border: `1px solid ${UI.colors.border}` }}>
+                                          <div style={{ width: `${pct}%`, height: '100%', background: color, borderRadius: 999 }} />
+                                        </div>
+                                      </div>
+                                    )
+                                  })}
+                                </div>
+                              </div>
+                            )
+                          })()}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </Card>
+              </div>
+            ) : null}
+
+            {activePanel === 'admin_users' && role === 'admin' ? (
+              <div style={{ gridColumn: '2 / span 2' }}>
+                <Card>
+                  <div style={{ display: 'grid', gap: 14 }}>
+                    <div
+                      style={{
+                        padding: 16,
+                        borderRadius: 16,
+                        border: `1px solid ${UI.colors.border}`,
+                        background:
+                          'linear-gradient(135deg, rgba(37,99,235,0.10) 0%, rgba(15,23,42,0.02) 65%, rgba(15,23,42,0.00) 100%)',
+                      }}
+                    >
+                      <div style={{ fontSize: 18, fontWeight: 950, letterSpacing: 0.2 }}>Admin: Users</div>
+                      <div style={{ color: UI.colors.muted, fontSize: 13, marginTop: 6 }}>Create a new user account.</div>
+                    </div>
+
+                    {adminCreateOk ? (
+                      <div
+                        style={{
+                          padding: 12,
+                          borderRadius: 14,
+                          border: `1px solid ${UI.colors.border}`,
+                          background: 'rgba(22, 163, 74, 0.08)',
+                          color: UI.colors.success,
+                          fontSize: 13,
+                        }}
+                      >
+                        {adminCreateOk}
+                      </div>
+                    ) : null}
+                    {adminCreateError ? (
+                      <div
+                        style={{
+                          padding: 12,
+                          borderRadius: 14,
+                          border: `1px solid ${UI.colors.border}`,
+                          background: 'rgba(220, 38, 38, 0.06)',
+                          color: UI.colors.danger,
+                          fontSize: 13,
+                        }}
+                      >
+                        {adminCreateError}
+                      </div>
+                    ) : null}
+
+                    <form onSubmit={adminCreateUser} style={{ display: 'grid', gap: 12, maxWidth: 720 }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
                         <Field label="Username">
-                          <Input
-                            value={adminNewUsername}
-                            onChange={(e) => setAdminNewUsername(e.target.value)}
-                            placeholder="username"
-                            required
-                          />
+                          <Input value={adminNewUsername} onChange={(e) => setAdminNewUsername(e.target.value)} placeholder="username" required />
                         </Field>
                         <Field label="Email" hint="Optional">
                           <Input value={adminNewEmail} onChange={(e) => setAdminNewEmail(e.target.value)} placeholder="email" />
                         </Field>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
                         <Field label="Password">
-                          <Input
-                            value={adminNewPassword}
-                            onChange={(e) => setAdminNewPassword(e.target.value)}
-                            placeholder="password"
-                            type="password"
-                            required
-                          />
+                          <Input value={adminNewPassword} onChange={(e) => setAdminNewPassword(e.target.value)} placeholder="password" type="password" required />
                         </Field>
                         <Field label="Role">
                           <Select value={adminNewRole} onChange={(e) => setAdminNewRole(e.target.value)}>
@@ -1750,60 +1959,157 @@ export default function App() {
                             <option value="customer">customer</option>
                           </Select>
                         </Field>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                         <Button type="submit">Create user</Button>
-                        {adminCreateOk ? <div style={{ color: UI.colors.success }}>{adminCreateOk}</div> : null}
-                        {adminCreateError ? <div style={{ color: UI.colors.danger }}>{adminCreateError}</div> : null}
-                      </form>
-                    </div>
-                  ) : null}
-
-                  {activePanel === 'admin_analytics' && role === 'admin' ? (
-                    <div style={{ display: 'grid', gap: 10 }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <div style={{ fontWeight: 900, color: UI.colors.sidebarText }}>Analytics</div>
-                        <Button
-                          variant="ghost"
-                          onClick={() => {
-                            setAnalyticsSummary(null)
-                            setAnalyticsResolution(null)
-                            setAnalyticsVolume(null)
-                            setAnalyticsError('')
-                            apiFetch('/api/analytics/summary/', { token })
-                              .then((s) => setAnalyticsSummary(s))
-                              .catch((e) => setAnalyticsError(e.message))
-                            apiFetch('/api/analytics/resolution/', { token })
-                              .then((r) => setAnalyticsResolution(r))
-                              .catch((e) => setAnalyticsError(e.message))
-                            apiFetch('/api/analytics/volume/?days=30', { token })
-                              .then((v) => setAnalyticsVolume(v))
-                              .catch((e) => setAnalyticsError(e.message))
-                          }}
-                          style={{ padding: '6px 10px' }}
-                        >
-                          Refresh
-                        </Button>
                       </div>
-                      {analyticsError ? <div style={{ color: UI.colors.danger, marginTop: 2 }}>{analyticsError}</div> : null}
-                      <div style={{ display: 'grid', gap: 8 }}>
-                        <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}`, background: UI.colors.surface2 }}>
-                          <div style={{ color: UI.colors.muted, fontSize: 12 }}>Total tickets</div>
-                          <div style={{ fontSize: 18, fontWeight: 900 }}>{analyticsSummary?.total ?? '—'}</div>
-                        </div>
-                        <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}`, background: UI.colors.surface2 }}>
-                          <div style={{ color: UI.colors.muted, fontSize: 12 }}>Open / Unresolved</div>
-                          <div style={{ fontSize: 18, fontWeight: 900 }}>{analyticsSummary?.open_like ?? '—'}</div>
-                        </div>
-                        <div style={{ padding: 12, borderRadius: 12, border: `1px solid ${UI.colors.border}`, background: UI.colors.surface2 }}>
-                          <div style={{ color: UI.colors.muted, fontSize: 12 }}>Avg resolution (seconds)</div>
-                          <div style={{ fontSize: 16, fontWeight: 900 }}>{analyticsResolution?.avg_resolution_seconds ?? '—'}</div>
-                        </div>
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
+                    </form>
+                  </div>
+                </Card>
               </div>
-            </div>
+            ) : null}
 
+            {activePanel === 'agent_queue' && (role === 'agent' || role === 'admin') ? (
+              <div style={{ gridColumn: '2 / span 2' }}>
+                <Card>
+                  <div style={{ display: 'grid', gap: 12 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                      <div>
+                        <div style={{ fontSize: 16, fontWeight: 900 }}>Agent queue</div>
+                        <div style={{ fontSize: 12, color: UI.colors.muted, marginTop: 2 }}>Sorted by: {agentQueueSort}</div>
+                      </div>
+                      <Select value={agentQueueSort} onChange={(e) => setAgentQueueSort(e.target.value)} style={{ height: 36, paddingTop: 8, paddingBottom: 8 }}>
+                        <option value="oldest">Oldest</option>
+                        <option value="priority">Priority</option>
+                      </Select>
+                    </div>
+
+                    {(() => {
+                      const grouped = {
+                        OPEN: [],
+                        ASSIGNED: [],
+                        IN_PROGRESS: [],
+                        WAITING_ON_CUSTOMER: [],
+                        RESOLVED: [],
+                        CLOSED: [],
+                      }
+                      for (const t of tickets) {
+                        const k = t.status || 'OPEN'
+                        if (!grouped[k]) grouped[k] = []
+                        grouped[k].push(t)
+                      }
+
+                      const order = ['OPEN', 'ASSIGNED', 'IN_PROGRESS', 'WAITING_ON_CUSTOMER', 'RESOLVED', 'CLOSED']
+                      return (
+                        <div style={{ display: 'grid', gap: 10 }}>
+                          {order.map((k) => {
+                            const list = sortTickets(grouped[k] || [], agentQueueSort)
+                            if (list.length === 0) return null
+                            return (
+                              <div key={k} style={{ display: 'grid', gap: 8, padding: 12, borderRadius: 14, border: `1px solid ${UI.colors.border}`, background: UI.colors.surface2 }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+                                  <div style={{ color: UI.colors.text, fontWeight: 950, fontSize: 12 }}>{k}</div>
+                                  <div style={{ color: UI.colors.muted, fontSize: 12 }}>{list.length}</div>
+                                </div>
+                                <div style={{ display: 'grid', gap: 6 }}>
+                                  {list.slice(0, 40).map((t) => (
+                                    <button
+                                      key={t.id}
+                                      onClick={() => setSelectedTicketId(t.id)}
+                                      style={{
+                                        textAlign: 'left',
+                                        width: '100%',
+                                        padding: '10px 12px',
+                                        borderRadius: 12,
+                                        border: `1px solid ${UI.colors.border}`,
+                                        background: UI.colors.surface,
+                                        color: UI.colors.text,
+                                        cursor: 'pointer',
+                                      }}
+                                    >
+                                      <div style={{ fontWeight: 900, fontSize: 13 }}>#{t.id} {t.subject}</div>
+                                      <div style={{ fontSize: 12, color: UI.colors.muted, marginTop: 4 }}>{t.priority}</div>
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      )
+                    })()}
+                  </div>
+                </Card>
+              </div>
+            ) : null}
+
+            {activePanel === 'new_ticket' && role === 'customer' ? (
+              <div style={{ gridColumn: '2 / span 2' }}>
+                <Card>
+                  <div style={{ display: 'grid', gap: 12, maxWidth: 760 }}>
+                    <div>
+                      <div style={{ fontSize: 16, fontWeight: 900 }}>New ticket</div>
+                      <div style={{ fontSize: 12, color: UI.colors.muted, marginTop: 2 }}>Create a new support request.</div>
+                    </div>
+                    <form onSubmit={createTicket} style={{ display: 'grid', gap: 10 }}>
+                      <Field label="Subject">
+                        <Input value={newTicketSubject} onChange={(e) => setNewTicketSubject(e.target.value)} placeholder="Subject" required />
+                      </Field>
+                      <Field label="Description">
+                        <div style={{ display: 'grid', gap: 8 }}>
+                          <Textarea value={newTicketDescription} onChange={(e) => setNewTicketDescription(e.target.value)} placeholder="Description" rows={5} />
+                          {sttSupported ? (
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (sttListening && sttTarget === 'new_ticket_description') stopStt()
+                                  else startStt('new_ticket_description')
+                                }}
+                                title={sttListening && sttTarget === 'new_ticket_description' ? 'Stop voice' : 'Voice to text'}
+                                style={{
+                                  width: 36,
+                                  height: 36,
+                                  borderRadius: 10,
+                                  border: `1px solid ${UI.colors.border}`,
+                                  background: sttListening && sttTarget === 'new_ticket_description' ? UI.colors.primary : UI.colors.surface,
+                                  boxShadow: `0 1px 2px ${UI.colors.shadow}`,
+                                  display: 'grid',
+                                  placeItems: 'center',
+                                  cursor: 'pointer',
+                                }}
+                              >
+                                <MicIcon active={sttListening && sttTarget === 'new_ticket_description'} />
+                              </button>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ fontSize: 12, color: UI.colors.muted }}>
+                                  {sttListening && sttTarget === 'new_ticket_description' ? 'Listening…' : 'Voice input'}
+                                </div>
+                                {sttError ? <div style={{ fontSize: 12, color: UI.colors.danger, marginTop: 2 }}>{sttError}</div> : null}
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
+                      </Field>
+                      <Field label="Priority">
+                        <Select value={newTicketPriority} onChange={(e) => setNewTicketPriority(e.target.value)}>
+                          <option value="LOW">LOW</option>
+                          <option value="MEDIUM">MEDIUM</option>
+                          <option value="HIGH">HIGH</option>
+                          <option value="URGENT">URGENT</option>
+                        </Select>
+                      </Field>
+                      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                        <Button type="submit">Create</Button>
+                      </div>
+                    </form>
+                  </div>
+                </Card>
+              </div>
+            ) : null}
+
+            {activePanel === 'tickets' || activePanel === 'presence' ? (
+              <>
             <Card>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div>
@@ -2137,6 +2443,7 @@ export default function App() {
                         <div style={{ fontSize: 12, color: UI.colors.danger }}>{sttError}</div>
                       ) : null}
                     </div>
+                    {sendMessageError ? <div style={{ color: UI.colors.danger, fontSize: 13 }}>{sendMessageError}</div> : null}
                     <input
                       type="file"
                       multiple
@@ -2158,6 +2465,8 @@ export default function App() {
                 </div>
               )}
             </Card>
+              </>
+            ) : null}
           </div>
         )}
       </div>

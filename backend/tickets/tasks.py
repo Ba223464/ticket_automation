@@ -50,6 +50,11 @@ def send_ticket_email(self, event_type: str, ticket_id: int, message_id: int | N
             message = None
 
     customer_email = getattr(ticket.customer, "email", "") if ticket.customer_id else ""
+    if not customer_email and ticket.customer_id:
+        # Some installs use username-as-email for customer accounts.
+        u = getattr(ticket.customer, "username", "") or ""
+        if "@" in u:
+            customer_email = u
     agent_email = getattr(ticket.assigned_agent, "email", "") if ticket.assigned_agent_id else ""
 
     to_emails = []

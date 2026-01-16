@@ -1,0 +1,120 @@
+Overview 
+The Smart Customer Support & Ticket Automation System is a real-time, AI-assisted 
+support platform designed to streamline customer–agent interactions and automate 
+operational workflows. The system allows customers to raise support tickets through a 
+secure web interface, while support agents receive live updates and respond in real time. 
+Functional requirements 
+● Customer Authentication (Social Sign-In) 
+● Ticket Management & Workflow 
+○ Customers can create, view, and update support tickets 
+○ Ticket lifecycle states: Open, Assigned, In Progress, Waiting on Customer, 
+Resolved, Closed 
+○ Automatic ticket assignment to available agents 
+● Real-Time Ticket Updates (WebSockets) 
+○ Live ticket status updates for customers and agents 
+○ Real-time agent responses without page refresh 
+○ Instant visibility for: New messages, Status changes, Assignment updates 
+● Notification System 
+○ Email notifications for ticket status changes 
+● AI-Assisted Auto-Reply Generation 
+○ AI-generated draft responses for agents 
+○ Editable drafts before sending 
+● Search & Discovery 
+○ Full-text search across: 
+■ Tickets 
+■ Conversation messages 
+■ Customer metadata 
+○ Filters by status, priority, agent, and date 
+● Analytics & Reporting Dashboard 
+○ Provides a real-time analytics dashboard to track ticket volume, status 
+distribution, and resolution trends.
+
+Frontend (React) — features & responsibilities
+
+
+- Pages / UI components
+  - Login / Social Sign-In page (Google/GitHub/etc.)
+  - Customer Dashboard
+    - Create Ticket form (subject, description, priority, attachments)
+    - Ticket list with filters (status, priority, date)
+    - Ticket detail view (message thread, status, add message, attachments)
+    - Real-time indicators (typing, new messages)
+  - Agent Dashboard
+    - Assigned tickets queue
+    - Unassigned tickets list (if manual assignment)
+    - Ticket detail with internal notes & public replies
+    - AI Draft panel: shows AI-generated draft that can be edited and sent
+    - Agent presence / availability toggle
+  - Admin / Analytics Dashboard
+    - KPI cards: open tickets, avg resolution time, SLA breaches
+    - Charts: daily ticket volume, resolution time distribution, backlog by agent
+  - Notifications UI
+    - In-app toast/notification center for updates
+  - Search UI
+    - Global search box, results grouped by tickets/messages/customers
+  - Settings
+    - Email templates, SLA rules, agent management (role/permissions)
+  - Shared components
+    - Ticket card/list, message bubble, attachments list, status badge, filters, pagination
+
+- Client responsibilities
+  - Connect to REST API for CRUD + file uploads
+  - Open and maintain a WebSocket connection for live updates (message, status, assignment)
+  - Realtime UI updates and optimistic updates for smooth UX
+  - Display email/notification confirmations
+  - Input validation and client-side security
+  - Local caching and pagination (infinite scroll or page-per-size)
+  - Error & loading states, retry logic for transient failures
+  - Accessibility and responsive layout (mobile-friendly)
+
+Backend (Django + Celery + Redis + PostgreSQL) — features & responsibilities
+
+- Core backend features
+  - Authentication & Authorization
+    - Social Sign-In (Google/GitHub/Facebook) via OAuth through allauth or python-social-auth
+    - JWT tokens for API sessions (short-lived refresh tokens)
+    - Roles: customer, agent, admin; permission checks at endpoints
+  - Ticket CRUD & lifecycle
+    - Ticket model with statuses: Open, Assigned, In Progress, Waiting on Customer, Resolved, Closed
+    - Priorities: Low / Medium / High / Urgent
+    - Ticket message threads (public/private flags)
+    - Attachments model (link to S3)
+  - Automatic assignment logic
+    - Simple round-robin or load-based agent selection
+    - Consider rule-based assignment (skill tags, language, working hours) as advanced
+  - Real-time updates
+    - WebSocket channels for tickets (per-ticket channel) and agent presence queues
+    - Broadcast events on new message, status change, assignment change
+  - Notifications
+    - Email notifications on status change, new reply, assignment (via Celery tasks)
+    - In-app notifications via WebSocket
+  - AI-Assisted auto-reply
+    - Background service / API endpoint which calls an LLM (OpenAI or other) with ticket context to produce draft reply
+    - Return editable draft; do not auto-send without agent confirmation
+    - Implement caching and rate-limiting + content-safety checks
+  - Search & discovery
+    - Full-text search across tickets, messages, and customer metadata
+    - Filters: status, priority, agent, date range, tags
+    - Consider Elasticsearch/OpenSearch for scale; for MVP use Postgres full-text (tsvector + GIN)
+  - Analytics & reporting
+    - Aggregations of ticket volume, resolution times, SLA breaches, agent throughput
+    - Precomputed metrics via periodic Celery tasks or on-the-fly for small scale
+  - Background jobs (Celery)
+    - Email sending, heavy search indexing, AI calls, periodic metrics aggregation, scheduled notifications (SLA reminders)
+  - Admin management
+    - Admin endpoints for managing agents, teams, business hours, SLA rules
+  - Observability & logs
+    - Structured logs, exception tracking (Sentry), metrics (Prometheus), request logging
+  - Security & compliance
+    - Input sanitation, attachment scanning, encryption in transit and at rest (for attachments), RBAC, audit logs
+
+Data model (high-level)
+- User (id, name, email, role, social_provider, is_active, last_seen)
+- CustomerProfile (user -> customer metadata: company, phone)
+- AgentProfile (user -> skills, availability, capacity)
+- Ticket (id, customer_id, subject, description, status, priority, assigned_agent_id, created_at, updated_at, closed_at, last_message_at)
+- TicketMessage (id, ticket_id, author_id, body, is_internal, created_at, attachments)
+- Attachment (id, file_url, uploader_id, ticket_id, message_id, filename, content_type, size)
+- Notification (id, user_id, type, payload, read, created_at)
+- AuditLog (action, actor_id, target_type, target_id, meta, created_at)
+- Metrics / Aggregates (daily_aggregates table or use Redis/Celery to compute)
